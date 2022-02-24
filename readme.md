@@ -48,7 +48,7 @@ The to-do list has gotten to be rather long and variegated. My current plan is t
 
 **Infrastructure**&ensp;I'd like to write my own automation system (à la OpenBench) that will kick off SPRT testing whenever I push a commit.
 
-## Acknowledgment
+## Acknowledgments
 
 Three sources are currently used to generate training positions:
 - [the Lichess database](https://database.lichess.org/)

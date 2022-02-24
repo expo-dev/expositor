@@ -53,9 +53,10 @@ Informally, popcnt and lzcnt were introduced as part of SSE4.2, and Intel has
 supported popcnt since Nehalem (ca 2007) and lzcnt since Haswell (ca 2013).
 
 ABM is only implemented as a single instruction set by AMD: all AMD processors
-support both or neither. Intel consider popcnt part of SSE4.2 and lzcnt part of
-BMI1. Support for popcnt is indicated by a separate cpuid flag. Intel uses AMD's
-flag for ABM to indicate support of lzcnt (since lzcnt completes ABM).
+support both popcnt and lzcnt or neither. Intel consider popcnt part of SSE4.2
+and lzcnt part of BMI1. Support for popcnt is indicated by a separate cpuid
+flag. Intel uses AMD's flag for ABM to indicate support of lzcnt (since lzcnt
+completes ABM).
 
 The ABM instruction set was introduced with the SSE4a instruction set.
 
