@@ -16,15 +16,23 @@ There are no command line options, but the engine does support some nonstandard 
 
 If you know the microarchitecture of your processor, try using a binary from the appropriate `specific/` directory of a release archive.[^3][^4] If you don't know the microarchitecture of your processor but you do know which features it supports, try using a binary from the appropriate `generic/` directory of a release archive. See the file named "extensions" in this repository for more information.
 
+The binaries include the default network, so you do not need to download a separate copy and do not need to set the `EvalFile` UCI option.
+
 [^3]: I'm not completely confident that I matched the proper cpu-target for some AMD microarchitectures; please let me know if I've made any mistakes.
 
 [^4]: I've attempted to include binaries for most consumer desktop hardware but not server or mobile platforms. If you have a Xeon or Atom processor, for example, and want a targeted binary, you'll need to compile from source. Feel free to reach out to me for help or if you'd like me to include a binary for your platform in releases.
 
+## Building
+
 If you'd like to compile Expositor from source, you will need to use a recent nightly toolchain.
+
+To build Expositor on Windows, run the `build.bat` script. (This sets the `VERSION`, `BUILD`, and `RUSTFLAGS` environment variables and then invokes `cargo build --release`.)
+
+To build Expositor on Linux, run the `build` script. (This needs to be done from within the repository, since it uses Git to automatically determine the version number.)
 
 ## Issues
 
-If you find any bugs or have any questions, please file an issue on Github.
+If you find any bugs or have any questions, please file an issue on Github or send me a message.
 
 <!-- to be added once more than version has been released
 ## Versions
