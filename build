@@ -1,0 +1,19 @@
+#! /usr/bin/env sh
+
+ENCODING=(X WK WQ WR WB WN WP BK BQ BR BB BN BP)
+COMMIT_MONTH=$(git show -s --format=%cd HEAD --date=format:%m)
+COMMIT_DAY=$(git show -s --format=%cd HEAD --date=format:%d)
+COMMIT_TIME=$(git show -s --format=%cd HEAD --date=format:%H%M)
+VERSION_BASE="${ENCODING[$COMMIT_MONTH]}$COMMIT_DAY"
+if [[ $(git status --porcelain --untracked-files=no) ]]; then
+  export VERSION="$VERSION_BASE+dev"
+else
+  export VERSION="$VERSION_BASE+$COMMIT_TIME"
+fi
+
+BUILD_DATE=$(date +"%-d %b %Y")
+BUILD_TIME=$(date +"%H%M")
+export BUILD="$BUILD_TIME on $BUILD_DATE"
+
+RUSTFLAGS='-C target-cpu=native' cargo build
+RUSTFLAGS='-C target-cpu=native' cargo build --release

@@ -1,0 +1,23 @@
+[package]
+name = "expositor"
+version = "2.0.0"
+authors = ["kade <kade@protonmail.ch>"]
+edition = "2018"
+
+[profile.test]
+opt-level = 3
+debug = true
+debug-assertions = true
+overflow-checks = true
+
+[profile.dev]
+opt-level = 3
+debug = true
+debug-assertions = true
+overflow-checks = true
+
+[profile.release]
+opt-level = 3
+debug = true
+debug-assertions = false
+overflow-checks = false

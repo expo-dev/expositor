@@ -12,7 +12,7 @@ There are no command line options, but the engine does support some nonstandard 
 
 ## Releases
 
-If you know the microarchitecture of your processor, try using a binary from the appropriate `specific/` directory of a release archive.[^2][^3] If you don't know the microarchitecture of your processor but you do know which features it supports, try using a binary from the appropriate `generic/` directory of the release archive. See the file named "extensions" in this repository for more information.
+If you know the microarchitecture of your processor, try using a binary from the appropriate `specific/` directory of a release archive.[^2][^3] If you don't know the microarchitecture of your processor but you do know which features it supports, try using a binary from the appropriate `generic/` directory of a release archive. See the file named "extensions" in this repository for more information.
 
 [^2]: I'm not completely confident that I matched the proper cpu-target for some AMD microarchitectures; please let me know if I've made any mistakes.
 
@@ -61,7 +61,9 @@ Particular thanks to [Jeremy Wright](https://github.com/jtheardw/mantissa) for h
 
 ## Terms of Use
 
-Expositor is free and distributed under the terms of version 3 of the Affero General Public License. You are welcome to run the program, modify it, copy it, sell it, or use it in a project of your own. If you distribute the program, verbatim or modified, you must provide the source and extend to anyone who obtains a copy the same license that I am granting you.
+Expositor is free and distributed under the terms of version 3 of the Affero General Public License. You are welcome to run the program, modify it, copy it, sell it, or use it in a project of your own.
+
+If you distribute the program, verbatim or modified, you must provide the source and extend to anyone who obtains a copy the same license that I am granting you.
 
 If users can interact with a modified version of the program (or a work based on the program) remotely through a computer network, you must provide a way for users to obtain its source.
 
