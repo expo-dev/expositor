@@ -1,22 +1,24 @@
 # Expositor
 
-Expositor is a UCI-conforming chess engine for AMD64 / Intel 64 systems. You can [play against her on Lichess](https://lichess.org/@/expositor) or download a copy for local use.
+Expositor is a UCI-conforming chess engine for AMD64 / Intel 64 systems.[^1] You can [play against her on Lichess](https://lichess.org/@/expositor) or download a copy for local use.
 
-Expositor does not yet have a CCRL rating, but from private testing I estimate her CCRL rating to be between 3000 and 3200 Elo.
+[^1]: This is because the network code makes use of inline assembly and some multithreaded code assumes total store order. In practice, you could probably run the engine proper without significant problems on an architecture with a weaker memory model (e.g. ARM), but in theory, this could cause incorrect behavior.
+
+Expositor does not yet have a CCRL rating, but from private testing I estimate her CCRL rating to be between 3000 and 3100 Elo.
 
 There are no command line options, but the engine does support some nonstandard commands; for more information, start Expositor and enter `help`.
 
-**Note** that the transposition table is effectively cleared between searches.[^1]
+**Note** that the transposition table is effectively cleared between searches.[^2]
 
-[^1]: This is currently not an option and cannot be disabled. The effect is achieved by tagging each table entry with a generation and does not incur the penalty of actually zeroing the table.
+[^2]: This is currently not an option and cannot be disabled. It's an intentional choice – it means singlythreaded searches are deterministic regardless of the state of the transposition table. The effect is achieved by tagging each table entry with a generation and does not incur the penalty of actually zeroing the table.
 
 ## Releases
 
-If you know the microarchitecture of your processor, try using a binary from the appropriate `specific/` directory of a release archive.[^2][^3] If you don't know the microarchitecture of your processor but you do know which features it supports, try using a binary from the appropriate `generic/` directory of a release archive. See the file named "extensions" in this repository for more information.
+If you know the microarchitecture of your processor, try using a binary from the appropriate `specific/` directory of a release archive.[^3][^4] If you don't know the microarchitecture of your processor but you do know which features it supports, try using a binary from the appropriate `generic/` directory of a release archive. See the file named "extensions" in this repository for more information.
 
-[^2]: I'm not completely confident that I matched the proper cpu-target for some AMD microarchitectures; please let me know if I've made any mistakes.
+[^3]: I'm not completely confident that I matched the proper cpu-target for some AMD microarchitectures; please let me know if I've made any mistakes.
 
-[^3]: I've attempted to include binaries for most consumer desktop hardware but not server or mobile platforms. If you have a Xeon or Atom processor, for example, and want a targeted binary, you'll need to compile from source. Feel free to reach out to me for help or if you'd like me to include a binary for your platform in releases.
+[^4]: I've attempted to include binaries for most consumer desktop hardware but not server or mobile platforms. If you have a Xeon or Atom processor, for example, and want a targeted binary, you'll need to compile from source. Feel free to reach out to me for help or if you'd like me to include a binary for your platform in releases.
 
 If you'd like to compile Expositor from source, you will need to use a recent nightly toolchain.
 
@@ -36,7 +38,7 @@ If you find any bugs or have any questions, please file an issue on Github.
 
 The to-do list has gotten to be rather long and variegated. My current plan is to tackle the smaller items first (aiming for a release in March or April) and then to begin work on some larger projects:
 
-**Tuning Search**&ensp;None of the search constants have been tuned! I expect to be able to wring a fair amount out of playing strength from that.
+**Tuning Search**&ensp;None of the search constants have been tuned! I expect to be able to wring a fair amount of playing strength out of that.
 
 **HCE Bootstrapping**&ensp;The neural network is currently trained from positions scored with Stockfish. I'd like to write an evaluator that replicates the personality of early versions of Expositor, train a network from positions scored by Expositor using that evaluator, then train another network from positions scored using the previous network, and so on.
 

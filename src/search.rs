@@ -445,7 +445,6 @@ fn main_search(
           killers.0 = mv;
         }
       }
-      // if depth >= 2 { selector.update_history_scores(context, stats, depth); }
       if depth >= 2 { selector.update_history_scores(context, depth); }
       break;
     }
