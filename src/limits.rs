@@ -62,7 +62,7 @@ impl SearchParams {
 
     if !(clock < 0.0) {
       let do_not_exceed = (clock - 1.0).max(0.0);
-      let max_time = ((clock - increment) * 0.37 + increment).min(do_not_exceed);
+      let max_time = ((clock - increment) * 0.125 + increment).min(do_not_exceed);
       let base =
         if let Some(movestogo) = self.movestogo {
           (clock - increment) / std::cmp::max(movestogo, 1) as f64 + increment
@@ -99,12 +99,26 @@ impl SearchParams {
 
 fn ideal_time(state : &State, seconds_remaining : f64, increment : f64) -> f64
 {
-  let remaining_ply = linear_model(state);
+  let time_control = seconds_remaining + 240.0*increment;
+  let remaining_ply;
+  // Bullet time control
+  if time_control < 60.0 {
+    remaining_ply = bullet_model(state);
+  }
+  // Transitional time control
+  else if time_control < 120.0 {
+    let blend = (time_control - 60.0) / 60.0;
+    remaining_ply = blend*standard_model(state) + (1.0-blend)*bullet_model(state);
+  }
+  // Standard time control
+  else {
+    remaining_ply = standard_model(state);
+  }
   let remaining_moves = (remaining_ply * 0.5).max(1.0);
   return (seconds_remaining - increment) / remaining_moves + increment;
 }
 
-fn linear_model(state : &State) -> f64
+fn standard_model(state : &State) -> f64
 {
   // Fit from TCEC games that lasted 60 to 240 ply
   // The coefficient of determination was about 0.45
@@ -115,5 +129,18 @@ fn linear_model(state : &State) -> f64
   let ply = state.ply as f64;
   let men = (state.sides[0] | state.sides[1]).count_ones() as f64 - 2.0;
   let rem = 35.0 - ply*0.24 + men*2.8;
+  return rem;
+}
+
+fn bullet_model(state : &State) -> f64
+{
+  // Fit from a small collection of games that Expositor
+  //   played on Lichess that lasted 60 ply or more
+  // The coefficient of determination was about 0.46
+  //   and the average squared error was about 1250
+  // This should be revisited in the future
+  let ply = state.ply as f64;
+  let men = (state.sides[0] | state.sides[1]).count_ones() as f64 - 2.0;
+  let rem = 29.0 - ply*0.125 + men*3.2;
   return rem;
 }
