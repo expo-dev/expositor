@@ -4,7 +4,7 @@ Expositor is a UCI-conforming chess engine for AMD64 / Intel 64 systems.[^1] You
 
 [^1]: This is because the network code makes use of inline assembly and some multithreaded code assumes total store order. In practice, you could probably run the engine proper without significant problems on an architecture with a weaker memory model (e.g. ARM), but in theory, this could cause incorrect behavior.
 
-Expositor has a CCRL Blitz rating of 3119.
+Expositor has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404/index.html) rating of 3119.
 
 There are no command line options, but the engine does support some nonstandard commands; for more information, start Expositor and enter `help`.
 
