@@ -71,10 +71,14 @@ Particular thanks to [Jeremy Wright](https://github.com/jtheardw/mantissa) for h
 
 ## Terms of Use
 
-Expositor is free and distributed under the terms of version 3 of the Affero General Public License. You are welcome to run the program, modify it, copy it, sell it, or use it in a project of your own.
+Expositor is free and distributed under the terms of version 3 of the GNU Affero General Public License. You are welcome to run the program, modify it, copy it, sell it, or use it in a project of your own.
 
 If you distribute the program, verbatim or modified, you must provide the source and extend to anyone who obtains a copy the same license that I am granting you.
 
 If users can interact with a modified version of the program (or a work based on the program) remotely through a computer network, you must provide a way for users to obtain its source.
 
 For more details, see the file named "license" in this repository.
+
+### Note
+
+Although the GNU Affero General Public License is a libre ("free") license in spirit, it is debatable whether programs licensed under its terms meet [the usual definition of libre software](http://www.gnu.org/philosophy/free-sw.html). Two of the freedoms that users of libre software have are the freedom to run the software as they wish, for any purpose, and the freedom to change it. However, the GNU Affero General Public License restricts these freedoms, requiring "the operator of a network server to provide the source code of [a] modified version [...] to the users of that server" (as summarized informally in the preamble). For example, your rights under this license are terminated if you violate section 13 ("Remote Network Interaction"), including (but not limited to) your right to modify the program.
