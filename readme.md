@@ -4,23 +4,25 @@ Expositor is a UCI-conforming chess engine for AMD64 / Intel 64 systems.[^1] You
 
 [^1]: This is because the network code makes use of inline assembly and some multithreaded code assumes total store order. In practice, you could probably run the engine proper without significant problems on an architecture with a weaker memory model (e.g. ARM), but in theory, this could cause incorrect behavior.
 
-Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404/index.html) rating of 3117.
+Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404/index.html) rating of 3118 (which corresponds to a FIDE rating of approximately 3200).[^2]
+
+[^2]: Based on a [linear regression](https://www.desmos.com/calculator/nfbvfuiv3l) of [data by Larry Kaufman](http://talkchess.com/forum3/viewtopic.php?f=2&t=77479&sid=83ee4a02e914a54fb23c7f5698b88e40).
 
 There are no command line options, but the engine does support some nonstandard commands; for more information, start Expositor and enter `help`.
 
-**Note** that the transposition table is effectively cleared between searches.[^2]
+**Note** that the transposition table is effectively cleared between searches.[^3]
 
-[^2]: This is currently not an option and cannot be disabled. It's an intentional choice – it means singlythreaded searches are deterministic regardless of the state of the transposition table. The effect is achieved by tagging each table entry with a generation and does not incur the penalty of actually zeroing the table.
+[^3]: This is currently not an option and cannot be disabled. It's an intentional choice – it means singlythreaded searches are deterministic regardless of the state of the transposition table. The effect is achieved by tagging each table entry with a generation and does not incur the penalty of actually zeroing the table.
 
 ## Releases
 
-If you know the microarchitecture of your processor, try using a binary from the appropriate `specific/` directory of a release archive.[^3][^4] If you don't know the microarchitecture of your processor but you do know which features it supports, try using a binary from the appropriate `generic/` directory of a release archive. See the file named "extensions" in this repository for more information.
+If you know the microarchitecture of your processor, try using a binary from the appropriate `specific/` directory of a release archive.[^4][^5] If you don't know the microarchitecture of your processor but you do know which features it supports, try using a binary from the appropriate `generic/` directory of a release archive. See the file named "extensions" in this repository for more information.
 
 The binaries include the default network, so you do not need to download a separate copy and do not need to set the `EvalFile` UCI option.
 
-[^3]: I'm not completely confident that I matched the proper cpu-target for some AMD microarchitectures; please let me know if I've made any mistakes.
+[^4]: I'm not completely confident that I matched the proper cpu-target for some AMD microarchitectures; please let me know if I've made any mistakes.
 
-[^4]: I've attempted to include binaries for most consumer desktop hardware but not server or mobile platforms. If you have a Xeon or Atom processor, for example, and want a targeted binary, you'll need to compile from source. Feel free to reach out to me for help or if you'd like me to include a binary for your platform in releases.
+[^5]: I've attempted to include binaries for most consumer desktop hardware but not server or mobile platforms. If you have a Xeon or Atom processor, for example, and want a targeted binary, you'll need to compile from source. Feel free to reach out to me for help or if you'd like me to include a binary for your platform in releases.
 
 ## Building
 
