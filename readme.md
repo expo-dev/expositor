@@ -6,7 +6,7 @@ Expositor is a UCI-conforming chess engine for AMD64 / Intel 64 systems.[^1] You
 
 Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404/index.html) rating of 3118 (which corresponds to a FIDE rating of approximately 3200).[^2]
 
-[^2]: Based on a [linear regression](https://www.desmos.com/calculator/nfbvfuiv3l) of [data by Larry Kaufman](http://talkchess.com/forum3/viewtopic.php?f=2&t=77479&sid=83ee4a02e914a54fb23c7f5698b88e40).
+[^2]: Based on a [linear regression](https://www.desmos.com/calculator/nfbvfuiv3l) of current CCRL ratings and [data from Larry Kaufman](http://talkchess.com/forum3/viewtopic.php?f=2&t=77479&sid=83ee4a02e914a54fb23c7f5698b88e40).
 
 There are no command line options, but the engine does support some nonstandard commands; for more information, start Expositor and enter `help`.
 
