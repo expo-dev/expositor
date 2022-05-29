@@ -37,7 +37,7 @@ pub fn horizontal_sum(x : Simd<f32, 8>) -> f32
 #[cfg(not(target_feature="avx"))]
 pub fn horizontal_sum(x : Simd<f32, LANES>) -> f32
 {
-  return x.horizontal_sum();
+  return x.reduce_sum();
 }
 
 // With -C opt-level=3 -C target-cpu=skylake this compiles to
