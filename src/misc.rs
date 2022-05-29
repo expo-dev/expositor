@@ -11,9 +11,9 @@ impl State {
   {
     if let Some(score) = self.endgame() { return score; }
     let raw = self.evaluate();
-    if self.dfz > 10 {
-      if self.dfz >= 50 { return 0; }
-      return (raw * 2.5 * (50-self.dfz) as f32).round() as i16;
+    if self.dfz > 20 {
+      if self.dfz >= 100 { return 0; }
+      return (raw * 1.25 * (100-self.dfz) as f32).round() as i16;
     }
     else {
       return (raw * 100.0).round() as i16;
@@ -85,9 +85,9 @@ pub fn piece_destinations(piece : usize, src : usize, composite : u64) -> u64
 pub fn crux_span(a : usize, b : usize) -> u64 // cruciform span
 {
   return if a >= b { CRUX_SPAN[b][a] } else { CRUX_SPAN[a][b] };
-  // TODO write this as follows instead?
+  // NOTE write this as follows instead?
   //   return CRUX_SPAN[a][b];
-  // TODO write this as follows instead?
+  // NOTE write this as follows instead?
   //   let rank_a = a / 8; let file_a = a % 8;
   //   let rank_b = b / 8; let file_b = b % 8;
   //   if rank_a == rank_b { return (RANK_SPAN[file_a][file_b] as u64) << (a & !7); }
@@ -99,7 +99,7 @@ pub fn crux_span(a : usize, b : usize) -> u64 // cruciform span
 pub fn salt_span(a : usize, b : usize) -> u64 // saltire span
 {
   return if a >= b { SALT_SPAN[b][a] } else { SALT_SPAN[a][b] };
-  // TODO write this as follows instead?
+  // NOTE write this as follows instead?
   //   return SALT_SPAN[a][b];
 }
 
@@ -107,9 +107,9 @@ pub fn salt_span(a : usize, b : usize) -> u64 // saltire span
 pub fn any_span(a : usize, b : usize) -> u64
 {
   return if a >= b { ANY_SPAN[b][a] } else { ANY_SPAN[a][b] };
-  // TODO write this as follows instead?
+  // NOTE write this as follows instead?
   //   return ANY_SPAN[a][b];
-  // TODO write this as follows instead?
+  // NOTE write this as follows instead?
   //   let rank_a = a / 8; let file_a = a % 8;
   //   let rank_b = b / 8; let file_b = b % 8;
   //   if rank_a == rank_b { return (RANK_SPAN[file_a][file_b] as u64) << (a & !7); }
@@ -121,9 +121,9 @@ pub fn any_span(a : usize, b : usize) -> u64
 pub fn line_through(a : usize, b : usize) -> u64
 {
   return if a >= b { ANY_LINE[b][a] } else { ANY_LINE[a][b] };
-  // TODO write this as follows instead?
+  // NOTE write this as follows instead?
   //   return ANY_LINE[a][b];
-  // TODO write this like crux_span? (calculating vertical and horizontal
+  // NOTE write this like crux_span? (calculating vertical and horizontal
   //   lines rather than performing a lookup in those cases)
 }
 

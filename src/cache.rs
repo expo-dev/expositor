@@ -51,7 +51,7 @@ pub fn initialize_cache(size : usize)
   unsafe {
     // We replace the cache instead of calling clear so
     //   that the allocation size is actually decreased
-    CACHE = Vec::new();
+    CACHE = Vec::with_capacity(size);
     for _ in 0..size { CACHE.push(NULL_ENTRY); }
     INDEX_MASK = size - 1;
   }

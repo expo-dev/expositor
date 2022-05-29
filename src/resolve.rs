@@ -63,8 +63,8 @@ pub fn resolving_search(
         //   assumptions of delta pruning no longer hold. In a KR v K endgame,
         //   for instance, capturing the rook doesn't gain roughly 5 pawns –
         //   it gains 100 pawns or more (converting a loss into a draw).
-        // TODO rather than using the static exchange score, use the most
-        //   optimistic score (capturing without retaliation) which results
+        // TODO rather than using the static exchange score, consider using the
+        //   most optimistic score (capturing without retaliation) which results
         //   in safer, more conservative behavior.
         if !mv.gives_check() && estimate.abs() < LIKELY_MATE {
           if static_eval + (mv.score as i16 * 20) + 100 < alpha { continue; }

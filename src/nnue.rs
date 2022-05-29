@@ -31,7 +31,7 @@ use std::simd::Simd;
 //              ─┴─
 //     weight[x][n] = weight[x±Bp][n±B1]    with signs chosen so that n±B1 and x±Bp
 //           ─┬─                              are not out of bounds
-//       input_from
+//       input-from
 //
 //  (Note that input to first layer weights are indexed in a different order than any other
 //   two-dimensional array: w2[n][x], dE_dw1[n][x], dE_dw2[n][x], m_gw1[n][x], m_gw2[n][x],
@@ -60,7 +60,9 @@ pub type Simd32 = Simd<f32, LANES>;
 const SIMD_ZERO : Simd32 = Simd::from_array([0.0; LANES]);
 
 // Number of input features and number of neurons per layer
-//   Np and N1 must be a multiple of 2×LANES, and N2 must be a multiple of LANES
+//   Np must be a multiple of 2×LANES
+//   N1 must be a multiple of 8×LANES
+//   N2 must be a multiple of LANES
 pub const Np : usize = 768; // Do not modify
 pub const N1 : usize = 512; // Okay to vary
 pub const N2 : usize = 8;   // Okay to vary
@@ -265,16 +267,39 @@ impl State {
       match self.turn {
         Color::White => {
           for n in 0..N2 {
-            let mut s = SIMD_ZERO;
-            for x in 0..V1 { s += a1[x] * simd_load!(SEARCH_NETWORK.w2[n], x); }
+            let mut s_a = SIMD_ZERO;
+            let mut s_b = SIMD_ZERO;
+            let mut s_c = SIMD_ZERO;
+            let mut s_d = SIMD_ZERO;
+            for x in 0..V1/4 {
+              s_a += a1[x*4+0] * simd_load!(SEARCH_NETWORK.w2[n], x*4+0);
+              s_b += a1[x*4+1] * simd_load!(SEARCH_NETWORK.w2[n], x*4+1);
+              s_c += a1[x*4+2] * simd_load!(SEARCH_NETWORK.w2[n], x*4+2);
+              s_d += a1[x*4+3] * simd_load!(SEARCH_NETWORK.w2[n], x*4+3);
+            }
+            let s = (s_a + s_b) + (s_c + s_d);
             s2[n].write(SEARCH_NETWORK.b2[n] + horizontal_sum(s));
           }
         }
         Color::Black => {
           for n in 0..N2 {
-            let mut s = SIMD_ZERO;
-            for x in 0..H1 { s += a1[H1+x] * simd_load!(SEARCH_NETWORK.w2[n],   x ); }
-            for x in 0..H1 { s += a1[  x ] * simd_load!(SEARCH_NETWORK.w2[n], H1+x); }
+            let mut s_a = SIMD_ZERO;
+            let mut s_b = SIMD_ZERO;
+            let mut s_c = SIMD_ZERO;
+            let mut s_d = SIMD_ZERO;
+            for x in 0..H1/4 {
+              s_a += a1[H1+x*4+0] * simd_load!(SEARCH_NETWORK.w2[n],   x*4+0 );
+              s_b += a1[H1+x*4+1] * simd_load!(SEARCH_NETWORK.w2[n],   x*4+1 );
+              s_c += a1[H1+x*4+2] * simd_load!(SEARCH_NETWORK.w2[n],   x*4+2 );
+              s_d += a1[H1+x*4+3] * simd_load!(SEARCH_NETWORK.w2[n],   x*4+3 );
+            }
+            for x in 0..H1/4 {
+              s_a += a1[  x*4+0 ] * simd_load!(SEARCH_NETWORK.w2[n], H1+x*4+0);
+              s_b += a1[  x*4+1 ] * simd_load!(SEARCH_NETWORK.w2[n], H1+x*4+1);
+              s_c += a1[  x*4+2 ] * simd_load!(SEARCH_NETWORK.w2[n], H1+x*4+2);
+              s_d += a1[  x*4+3 ] * simd_load!(SEARCH_NETWORK.w2[n], H1+x*4+3);
+            }
+            let s = (s_a + s_b) + (s_c + s_d);
             s2[n].write(SEARCH_NETWORK.b2[n] + horizontal_sum(s));
           }
         }

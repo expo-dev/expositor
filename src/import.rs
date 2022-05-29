@@ -156,27 +156,121 @@ impl ScoredFENReader {
 }
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-// TODO handle games from TCEC that don't have spaces after move numbers
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum GameResult {
+  White,      // 1-0
+  Black,      // 0-1
+  Draw,       // ½-½
+  Incomplete, //  *
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum GameTermination {
+  Normal,
+  Flag,
+}
+
+pub struct PGNGame {
+  pub base        : f32,
+  pub increment   : f32,
+  pub result      : GameResult,
+  pub termination : GameTermination,
+  pub expo_white  : bool,
+  pub expo_black  : bool,
+  pub white_elo   : u16,
+  pub black_elo   : u16,
+  pub movelist    : Vec<Move>,
+}
 
 impl Iterator for PGNReader {
-  type Item = std::io::Result<Vec<Move>>;
+  type Item = std::io::Result<PGNGame>;
 
+  // TODO this is a mess and probably ought to be rewritten
   fn next(&mut self) -> Option<Self::Item> {
+    let mut game = PGNGame {
+      base:        0.0,
+      increment:   0.0,
+      result:      GameResult::Incomplete,
+      termination: GameTermination::Normal,
+      expo_white:  false,
+      expo_black:  false,
+      white_elo:   0,
+      black_elo:   0,
+      movelist:    Vec::new()
+    };
     let mut buf = String::new();
-    // We skip lines containing metadata (in brackets) and empty lines
+    // We skip empty lines and parse lines containing metadata (in brackets)
     loop {
-      self.line += 1;
       let sz = match self.reader.read_line(&mut buf) {
         Ok(x) => x, Err(e) => return Some(Err(e))
       };
+      self.line += 1;
       if sz == 0 { return None; }
-      if buf.trim_start().chars().next().unwrap_or('[') != '[' { break; }
+      let mut tail = buf.trim_start().chars();
+      if let Some(head) = tail.next() {
+        if head != '[' { break; }
+        // Leading whitespace and the opening bracket have been removed by this point.
+        //   We consider /^ *([^ ]+) +"(.+?)"/ to be valid: there must be space after the
+        //   key, quotes are not escapable in the value, the trailing bracket is ignored.
+        //   In theory, the key can contain quotes (but can never contain spaces).
+        let tail = tail.as_str().trim_start();
+        if let Some((key, tail)) = tail.split_once(' ') {
+          let mut tail = tail.trim_start().chars();
+          if let Some(head) = tail.next() {
+            let tail = tail.as_str();
+            if head == '"' {
+              if let Some((value, _)) = tail.split_once('"') {
+                match key {
+                  "White"  => {
+                    if value.starts_with("Expo") || value.starts_with("expo") {
+                      game.expo_white = true;
+                    }
+                  }
+                  "Black"  => {
+                    if value.starts_with("Expo") || value.starts_with("expo") {
+                      game.expo_black = true;
+                    }
+                  }
+                  "Result" => {
+                    match value {
+                      "1-0"     => { game.result = GameResult::White; }
+                      "0-1"     => { game.result = GameResult::Black; }
+                      "1/2-1/2" => { game.result = GameResult::Draw;  }
+                      _ => {}
+                    }
+                  }
+                  "TimeControl" => {
+                    if let Some((left, right)) = value.split_once('+') {
+                      if let Ok(base) =  left.parse::<f32>() { game.base      = base; }
+                      if let Ok(incr) = right.parse::<f32>() { game.increment = incr; }
+                    }
+                  }
+                  "Termination" => {
+                    match value {
+                      "Normal"       => { game.termination = GameTermination::Normal; }
+                      "Time forfeit" => { game.termination = GameTermination::Flag;   }
+                      _ => {}
+                    }
+                  }
+                  "WhiteElo" => {
+                    if let Ok(rating) = value.parse::<u16>() { game.white_elo = rating; }
+                  }
+                  "BlackElo" => {
+                    if let Ok(rating) = value.parse::<u16>() { game.black_elo = rating; }
+                  }
+                  _ => {}
+                }
+              }
+            }
+          }
+        }
+      }
       buf.clear();
     }
     // We then process the move list, stripping out comments
     //   (note that we don't support nested comments)
     let mut working = State::new();
-    let mut movelist : Vec<Move> = Vec::new();
     loop {
       let mut text = String::new();
       let mut comment = false;
@@ -204,6 +298,7 @@ impl Iterator for PGNReader {
           }
         }
       }
+      // TODO handle games from TCEC that don't have spaces after move numbers
       for token in text.split_ascii_whitespace() {
         if token.ends_with('.') {
           let movenum = token.trim_end_matches('.');
@@ -224,13 +319,25 @@ impl Iterator for PGNReader {
           continue;
         }
         if token=="1-0" || token=="0-1" || token=="1/2-1/2" || token=="*" {
-          return Some(Ok(movelist));
+          let list_result = match token {
+            "1-0"     => GameResult::White,
+            "0-1"     => GameResult::Black,
+            "1/2-1/2" => GameResult::Draw,
+            _         => GameResult::Incomplete
+          };
+          if list_result != GameResult::Incomplete {
+            if game.result != GameResult::Incomplete && list_result != game.result {
+              return Some(Err(Error::new(ErrorKind::Other, "game result mismatch")));
+            }
+            game.result = list_result;
+          }
+          return Some(Ok(game));
         }
         let mv = match parse_short(&working, token) {
           Ok(m) => m, Err(msg) => return Some(Err(Error::new(ErrorKind::Other, msg)))
         };
         working.apply(&mv);
-        movelist.push(mv);
+        game.movelist.push(mv);
       }
       buf.clear();
       self.line += 1;
@@ -239,14 +346,14 @@ impl Iterator for PGNReader {
       };
       // Games are definitively completed by reading a result (1-0, 1/2-1/2, 0-1, or *)
       //   but we also accept EOF or an empty line
-      if sz == 0 { return Some(Ok(movelist)); }
-      if buf.trim_start().is_empty() { return Some(Ok(movelist)); }
+      if sz == 0 { return Some(Ok(game)); }
+      if buf.trim_start().is_empty() { return Some(Ok(game)); }
     }
   }
 }
 
 impl PGNReader {
-  pub fn collect(self) -> std::io::Result<Vec<Vec<Move>>>
+  pub fn collect(self) -> std::io::Result<Vec<PGNGame>>
   {
     let mut games = Vec::new();
     for state in self {

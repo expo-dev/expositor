@@ -146,7 +146,7 @@ fn kp_v_k(
   let def_king_in_field =
     (def_king/8 >= atk_pawn/8) && (diff(def_king%8, atk_pawn%8) <= field_len);
 
-  // TODO this isn't quite right if the king is blocking its own pawn
+  // NOTE this isn't quite right if the king is blocking its own pawn
   //   (it's still a win, but maybe needs to be scored differently)
   if turn == black_atk && !def_king_in_field {
     return 5_00 - ((field_len as i16) << 6);

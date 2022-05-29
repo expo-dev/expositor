@@ -28,9 +28,23 @@ macro_rules! ttyeprintln {
   }
 }
 
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+pub const cache_size_default      : usize = 67108864;  // 64 MiB ~ 4 million entries
+pub const search_threads_default  : usize = 1;
+pub const search_overhead_default : usize = 10;
+
+#[cfg(    debug_assertions) ] pub const use_prev_gen_default : bool = false;
+#[cfg(not(debug_assertions))] pub const use_prev_gen_default : bool = true;
+
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
 pub fn uci() -> std::io::Result<()>
 {
-  unsafe { SEARCH_NETWORK = DEFAULT_NETWORK; }
+  unsafe {
+    SEARCH_NETWORK = DEFAULT_NETWORK;
+    USE_PREV_GEN = use_prev_gen_default;
+  }
 
   let mut root     = State::new();
   let mut history  = Vec::new();
@@ -39,8 +53,8 @@ pub fn uci() -> std::io::Result<()>
 
   root.initialize_nnue();
 
-  let mut search_overhead = 100;
-  let mut search_threads = 1;
+  let mut search_overhead = search_overhead_default;
+  let mut search_threads  = search_threads_default;
 
   let stdin = std::io::stdin();
   let mut buf = String::new();
@@ -56,10 +70,10 @@ pub fn uci() -> std::io::Result<()>
       "uci" => {
         println!("id name Expositor {}", VERSION);
         println!("id author Kade");
-        println!("option name EvalFile type string");
-        println!("option name Hash type spin default 64 min 1 max 32768");
-        println!("option name Threads type spin default 1 min 1 max 240");
-        println!("option name Move Overhead type spin default 100 min 0 max 1000");
+        println!("option name Hash type spin default {} min 1 max 65536", cache_size_default >> 20);
+        println!("option name Threads type spin default {} min 1 max 240", search_threads_default);
+        println!("option name Overhead type spin default {} min 0 max 1000", search_overhead_default);
+        println!("option name Persist type check default {}", use_prev_gen_default);
         println!("uciok");
       }
 
@@ -82,18 +96,9 @@ pub fn uci() -> std::io::Result<()>
         let val = inp.intersperse(" ").collect::<String>();
 
         match opt.as_str() {
-          "EvalFile" => {
-            if val.len() > 0 {
-              let mut path = val;
-              if !path.ends_with(".nnue") { path.push_str(".nnue"); }
-              unsafe { SEARCH_NETWORK = Network::load(&path)?; }
-              root.initialize_nnue();
-            }
-          }
-
           "Hash" => {
             if let Ok(mb) = val.parse::<usize>() {
-              if mb > 32768 || 1 > mb {
+              if mb > 65536 || 1 > mb {
                 ttyeprintln!("error: invalid value");
                 continue;
               }
@@ -113,11 +118,19 @@ pub fn uci() -> std::io::Result<()>
             else { ttyeprintln!("error: invalid or missing value"); }
           }
 
-          "Move Overhead" => {
+          "Overhead" => {
             if let Ok(oh) = val.parse::<usize>() {
               search_overhead = oh;
             }
             else { ttyeprintln!("error: invalid or missing value"); }
+          }
+
+          "Persist" => {
+            match val.to_lowercase().as_str() {
+              "true" | "t" | "yes" | "y" => unsafe { USE_PREV_GEN = true;  }
+              "false" | "f" | "no" | "n" => unsafe { USE_PREV_GEN = false; }
+              _ => { ttyeprintln!("error: invalid or missing value"); }
+            }
           }
 
           _ => { ttyeprintln!("error: unrecognized option"); }
@@ -227,20 +240,30 @@ pub fn uci() -> std::io::Result<()>
         if !isatty(STDOUT) {
           params.overhead = search_overhead;
         }
-        let limits = params.limits(&root);
+        let limits = params.calculate_limits(&root);
         if search_in_progress() {
-          ttyeprintln!("error: search in progress");
-          continue;
+          std::thread::sleep(std::time::Duration::from_millis(100));
+          if search_in_progress() {
+            ttyeprintln!("error: search in progress");
+            continue;
+          }
         }
         start_search(&root, &history, limits, search_threads);
       }
 
       "stop" => {
         if !search_in_progress() {
-          ttyeprintln!("error: no search in progress");
-          continue;
+          std::thread::sleep(std::time::Duration::from_millis(100));
+          if !search_in_progress() {
+            ttyeprintln!("error: no search in progress");
+            continue;
+          }
         }
-        stop_search();
+        loop {
+          stop_search();
+          std::thread::sleep(std::time::Duration::from_millis(10));
+          if !search_in_progress() { break; }
+        }
       }
 
       // Statistics  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
@@ -267,6 +290,26 @@ pub fn uci() -> std::io::Result<()>
 
       // Tools ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
+      "stderr-isatty" => {
+        if let Some(toggle) = inp.next() {
+          match toggle.to_lowercase().as_str() {
+            "true" | "t" | "yes" | "y" => unsafe { STDERR_ISATTY = Some(true);  }
+            "false" | "f" | "no" | "n" => unsafe { STDERR_ISATTY = Some(false); }
+            _ => {}
+          }
+        }
+      }
+
+      "stdout-isatty" => {
+        if let Some(toggle) = inp.next() {
+          match toggle.to_lowercase().as_str() {
+            "true" | "t" | "yes" | "y" => unsafe { STDOUT_ISATTY = Some(true);  }
+            "false" | "f" | "no" | "n" => unsafe { STDOUT_ISATTY = Some(false); }
+            _ => {}
+          }
+        }
+      }
+
       "clear" => {
         if isatty(STDERR) { eprint!("\x1B[H\x1B[J"); let _ = std::io::stderr().flush(); }
       }
@@ -280,7 +323,7 @@ pub fn uci() -> std::io::Result<()>
       }
 
       "regression" => {
-        if isatty(STDERR) { fit_dataset(inp.next().unwrap())?; }
+        if isatty(STDERR) { if let Some(path) = inp.next() { fit_dataset(path)?; } }
       }
 
       "resolve-debug" => {
@@ -293,12 +336,14 @@ pub fn uci() -> std::io::Result<()>
       "resolve-leaves" => {
         if !isatty(STDERR) { continue; }
         let mut context = Context::new();
-        for state in FENReader::open(inp.next().unwrap())? {
-          let mut state = state?;
-          state.initialize_nnue();
-          resolving_search_leaves(
-            &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context
-          );
+        if let Some(path) = inp.next() {
+          for state in FENReader::open(path)? {
+            let mut state = state?;
+            state.initialize_nnue();
+            resolving_search_leaves(
+              &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context
+            );
+          }
         }
       }
 
@@ -310,29 +355,31 @@ pub fn uci() -> std::io::Result<()>
         let mut total_error = 0.0;
         let mut num_positions = 0;
 
-        let dataset = ScoredFENReader::open(
-          inp.next().unwrap(),
-          ScoreUnit::FractionalPawn,
-          ScoreSign::WhitePositive
-        )?;
-        for pair in dataset {
-          let (score, mut state) = pair.unwrap();
-          let score = score as f32 / 100.0;
-          state.initialize_nnue();
-          let prediction = resolving_search(
-            &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context, &mut statistics
-          ) as f32 / 100.0;
-          let error = compress(prediction) - compress(score);
-          total_error += error * error;
-          num_positions += 1;
-        }
+        if let Some(path) = inp.next() {
+          let dataset = ScoredFENReader::open(
+            path,
+            ScoreUnit::FractionalPawn,
+            ScoreSign::WhitePositive
+          )?;
+          for pair in dataset {
+            let (score, mut state) = pair.unwrap();
+            let score = score as f32 / 100.0;
+            state.initialize_nnue();
+            let prediction = resolving_search(
+              &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context, &mut statistics
+            ) as f32 / 100.0;
+            let error = compress(prediction) - compress(score);
+            total_error += error * error;
+            num_positions += 1;
+          }
 
-        for x in 0..20 { eprintln!("  {:2} {}", x, statistics.r_nodes_at_length[x]); }
-        let nodes = statistics.r_nodes_at_height.iter().sum::<usize>();
-        eprintln!("  {:8} node", nodes);
-        eprintln!("  {:8.1} node/pos", nodes as f32 / num_positions as f32);
-        let avg_error = total_error / num_positions as f32;
-        eprintln!("  {:.6} error", avg_error);
+          for x in 0..20 { eprintln!("  {:2} {}", x, statistics.r_nodes_at_length[x]); }
+          let nodes = statistics.r_nodes_at_height.iter().sum::<usize>();
+          eprintln!("  {:8} node", nodes);
+          eprintln!("  {:8.1} node/pos", nodes as f32 / num_positions as f32);
+          let avg_error = total_error / num_positions as f32;
+          eprintln!("  {:.6} error", avg_error);
+        }
       }
 
       "resolve-perf" => {
@@ -379,21 +426,25 @@ pub fn uci() -> std::io::Result<()>
       // NNUE  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
       "eval" => {
-        if isatty(STDERR) { show_derived(&root, unsafe { &SEARCH_NETWORK }); }
-        else { println!("{}", (root.evaluate() * 100.0).round() as i16); }
+        if  isatty(STDERR) { show_derived(&root, unsafe { &SEARCH_NETWORK }); }
+        if !isatty(STDOUT) { println!("{}", (root.evaluate() * 100.0).round() as i16); }
       }
 
       "load" => {
-        let mut path = inp.next().unwrap().to_owned();
-        if !path.ends_with(".nnue") { path.push_str(".nnue"); }
-        unsafe { SEARCH_NETWORK = Network::load(&path)?; }
-        root.initialize_nnue();
+        if let Some(path) = inp.next() {
+          let mut path = path.to_owned();
+          if !path.ends_with(".nnue") { path.push_str(".nnue"); }
+          unsafe { SEARCH_NETWORK = Network::load(&path)?; }
+          root.initialize_nnue();
+        }
       }
 
       "save" => {
-        let mut path = inp.next().unwrap().to_owned();
-        if !path.ends_with(".rs") { path.push_str(".rs"); }
-        unsafe { SEARCH_NETWORK.save_source(&path)?; }
+        if let Some(path) = inp.next() {
+          let mut path = path.to_owned();
+          if !path.ends_with(".rs") { path.push_str(".rs"); }
+          unsafe { SEARCH_NETWORK.save_source(&path)?; }
+        }
       }
 
       "train" => {
@@ -401,42 +452,42 @@ pub fn uci() -> std::io::Result<()>
 
         eprint!("  Input path:    ");
         buf.clear();
-        stdin.read_line(&mut buf).unwrap();
+        stdin.read_line(&mut buf)?;
         let inp_path = String::from(buf.trim());
 
         eprint!("  Output prefix: ");
         buf.clear();
-        stdin.read_line(&mut buf).unwrap();
+        stdin.read_line(&mut buf)?;
         let out_prefix = String::from(buf.trim());
 
         eprint!("  Learning rate: \x1B[2m0.01\x1B[22m\x1B[4D");
         buf.clear();
-        stdin.read_line(&mut buf).unwrap();
+        stdin.read_line(&mut buf)?;
         let alpha = buf.trim().parse::<f32>().unwrap_or(0.01);
 
         eprint!("  Beta:          \x1B[2m0.875\x1B[22m\x1B[5D");
         buf.clear();
-        stdin.read_line(&mut buf).unwrap();
+        stdin.read_line(&mut buf)?;
         let beta = buf.trim().parse::<f32>().unwrap_or(0.875);
 
         eprint!("  Gamma:         \x1B[2m0.96875\x1B[22m\x1B[7D");
         buf.clear();
-        stdin.read_line(&mut buf).unwrap();
+        stdin.read_line(&mut buf)?;
         let gamma = buf.trim().parse::<f32>().unwrap_or(0.96875);
 
         eprint!("  Batch size:    \x1B[2m16384\x1B[22m\x1B[5D");
         buf.clear();
-        stdin.read_line(&mut buf).unwrap();
+        stdin.read_line(&mut buf)?;
         let batch_size = buf.trim().parse::<usize>().unwrap_or(16384);
 
         eprint!("  Thread count:  ");
         buf.clear();
-        stdin.read_line(&mut buf).unwrap();
-        let num_threads = buf.trim().parse::<usize>().unwrap();
+        stdin.read_line(&mut buf)?;
+        let num_threads = buf.trim().parse::<usize>().unwrap_or(1);
 
         eprint!("  RNG seed:      \x1B[2m0\x1B[22m\x1B[D");
         buf.clear();
-        stdin.read_line(&mut buf).unwrap();
+        stdin.read_line(&mut buf)?;
         let rng_seed = buf.trim().parse::<u64>().unwrap_or(0);
 
         train_nnue(
@@ -496,21 +547,51 @@ pub fn uci() -> std::io::Result<()>
 }
 
 const HELP : &str = "
-EXPOSITOR
-
 DESCRIPTION
   Expositor is a UCI-conforming chess engine for AMD64 / Intel 64 systems. There
-  are no command line options but the engine supports some nonstandard commands:
+  are no command line options but the engine can be configured through these UCI
+  options:
 
-    flip        switches side to move in the current position
-    eval        prints the static evaluation of the current position
-    load ...    alias for the command \"setoption name EvalFile value ...\"
+    setoption name Hash value <num>
+      Set the size of the transposition (in MiB) to the largest power of two
+      less than or equal to <num>.
 
-    help        prints this message
-    license     prints information about the license
-    exit        alias for the command \"quit\"
+    setoption name Threads value <num>
+      Use <num> search threads. Performance will suffer if this is set larger
+      than the number of logical cores on your machine, and depending on your
+      processor, may suffer if this is set larger than the number of physical
+      cores.
 
-  On Linux systems, these commands are also available when stderr is a terminal:
+    setoption name Overhead value <num>
+      Set the move overhead (used in time control calculations) to <num>
+      milliseconds. \"Overhead\" refers to the time spent per move on I/O
+      operations between the engine and your client or user interface, any
+      time spent on network requests that is not corrected by the server
+      (if the engine is playing online), and any other latency that uses
+      time on the clock. It is important that this is not set to a value
+      less than the true overhead, or the engine will have a increased
+      risk of flagging.
+
+    setoption name Persist value <bool>
+      Allow the engine to reuse transposition table entries from previous
+      searches. When set to false, singlythreaded searches are deterministic
+      and repeatable, regardless of the state of the transposition table.
+      When set to true, search results may depend upon previous searches.
+      (This is achieved by tagging each table entry with a generation and
+      does not incur the penalty of actually zeroing the table.) Setting
+      this option to true generally increases playing strength.
+
+  As well as some nonstandard commands:
+
+    flip          switch side to move in the current position
+    eval          print the static evaluation of the current position
+    load <file>   load a set of neural network weights and begin using them
+
+    help          prints this help message
+    license       prints information about the license
+    exit          alias for the UCI command \"quit\"
+
+  These commands are also available when stderr is a terminal:
 
     stat        displays cumulative statistics related to move ordering
     trace       displays cumulative statistics related to main search
@@ -519,6 +600,19 @@ DESCRIPTION
     show        displays a human readable board with the current position
     eval        displays NNUE-derived piece values and the static evaluation
     clear       clears the terminal display
+
+  Expositor will automatically detect whether stderr and stdout are connected to
+  a terminal when running on a Linux system, but assumes when running on Windows
+  that neither stderr nor stdout are connected to a terminal. This can, however,
+  be explicitly overridden with the following commands:
+
+    stderr-isatty <bool>
+      Inform the engine that stderr is (or is not) connected to a terminal,
+      or to behave as if stderr is (or is not) connected to a terminal.
+
+    stdout-isatty <bool>
+      Inform the engine that stdout is (or is not) connected to a terminal,
+      or to behave as if stdout is (or is not) connected to a terminal.
 
   Expositor is lenient when reading moves – short algebraic notation can be used
   wherever long algebraic notation is expected. The current position can also be

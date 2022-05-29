@@ -41,10 +41,10 @@ impl State {
 
   pub fn apply(&mut self, m : &Move)
   {
-    // TODO update sides incrementally, or recalculate at the end?
-    // TODO eliminate state.squares[] and use at_square() instead?
-    // TODO undo fused updates to state.boards[]?
-    // TODO remove key_diff and update state.key directly each line?
+    // NOTE update sides incrementally, or recalculate at the end?
+    // NOTE eliminate state.squares[] and use at_square() instead?
+    // NOTE undo fused updates to state.boards[]?
+    // NOTE remove key_diff and update state.key directly each line?
 
     // Step 0. Copy the accumulators
     if self.s1.len() != 0 {
@@ -217,8 +217,14 @@ impl State {
     // Step 5. Update check status, side to move, depth from zeroing, and ply
     self.incheck = m.gives_check();
     self.turn = !self.turn;
-    self.dfz  = if m.is_zeroing() { 0 } else { self.dfz + 1 };
     self.ply += 1;
+    if self.dfz < 100 {
+      // Instead of writing a special case in main and resolving searches, which
+      //   is tricky to do properly (from experience), we simply keep dfz at 100
+      //   when a draw can be claimed before this position is reached (and leave
+      //   the draw to be scored by evaluate_in_game).
+      self.dfz  = if m.is_zeroing() { 0 } else { self.dfz + 1 };
+    }
 
     // Step 6. Perform key update
     let re_diff = rezobrist(prev_rights, prev_enpass, self.rights, self.enpass);

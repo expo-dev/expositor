@@ -6,8 +6,8 @@ pub const BUILD   : &'static str = env!("BUILD");
 pub const STDOUT : u64 = 1;
 pub const STDERR : u64 = 2;
 
-static mut STDOUT_ISATTY : Option<bool> = None;
-static mut STDERR_ISATTY : Option<bool> = None;
+pub static mut STDOUT_ISATTY : Option<bool> = None;
+pub static mut STDERR_ISATTY : Option<bool> = None;
 
 #[allow(unused_variables)]
 pub fn isatty(fd : u64) -> bool
@@ -35,8 +35,12 @@ pub fn isatty(fd : u64) -> bool
     if fd == STDOUT { STDOUT_ISATTY = Some(ret); }
     return ret;
   }
-  #[allow(unreachable_code)]
-  { return false; }
+  #[cfg(not(target_os="linux"))]
+  unsafe {
+    if fd == STDERR && STDERR_ISATTY.is_some() { return STDERR_ISATTY.unwrap(); }
+    if fd == STDOUT && STDOUT_ISATTY.is_some() { return STDOUT_ISATTY.unwrap(); }
+    return false;
+  }
 }
 
 #[allow(unused_variables)]
@@ -59,7 +63,7 @@ pub fn set_stacksize(bytes : u64) -> bool
     );
     return ret == 0;
   }
-  #[allow(unreachable_code)]
+  #[cfg(not(target_os="linux"))]
   { return false; }
 }
 

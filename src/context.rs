@@ -3,20 +3,23 @@ use crate::misc::*;
 use crate::movetype::*;
 use crate::piece::*;
 
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
 type KillerTable      =    [(Move, Move); 128]; // [height]
 type HistoryTable     = [[(i16, i16); 64]; 16]; // [piece][to-square] -> (score, score)
 type CountermoveTable =         [[Op; 64]; 16]; // [piece][to-square] -> op
 
-pub struct Context {                     // Read          Written         Index
-  pub current_line   : [  Op; 128],      //   main          main            height
-  pub gainful        : [bool; 128],      //   resolving     resolving       length
-  pub killer_table   : KillerTable,      //   main          main            height
-  pub history_table  : HistoryTable,     //   main          main            ...
-  pub counter_table  : CountermoveTable, //   main          main            ...
-  pub state_history  : Vec<(u64, bool)>, //   main          main            ...
-  pub null           : [bool; 128],      //   main          main            ...
-  pub exclude        : [Move; 128],      //   main          main            ...
-  pub nominal        : u8,
+pub struct Context {                      // Read          Written         Index
+//pub current_line   : [  Op; 128],       //   main          main            height
+  pub gainful        : [bool; 128],       //   resolving     resolving       length
+  pub killer_table   : KillerTable,       //   main          main            height
+  pub history_table  : HistoryTable,      //   main          main            ...
+//pub counter_table  : CountermoveTable,  //   main          main            ...
+  pub state_history  : Vec<(u64, bool)>,  //   main          setup+main      ...
+  pub null           : [bool; 128],       //   main          main            height
+  pub exclude        : [Move; 128],       //   main          main            height
+  pub nominal        : u8,                //   main          setup           ...
+  pub pv             : [Vec<Move>; 128]   //   main          main            height
 }
 
 pub struct Statistics {
@@ -44,35 +47,56 @@ pub struct Statistics {
   pub zero_fst_fwfd           : usize,
 }
 
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
 impl Context {
   pub const fn new() -> Self
   {
     const NULL_PAIR : (Move, Move) = (NULL_MOVE, NULL_MOVE);
     return Self {
-      current_line:   [NOP; 128],
+//    current_line:   [NOP; 128],
       gainful:        [false; 128],
       killer_table:   [NULL_PAIR; 128],
       history_table:  [[(0, 0); 64]; 16],
-      counter_table:  [[NOP; 64]; 16],
+//    counter_table:  [[NOP; 64]; 16],
       state_history:  Vec::new(),
       null:           [false; 128],
       exclude:        [NULL_MOVE; 128],
       nominal:        0,
+      pv: [
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+      ]
     };
   }
 
   pub fn reset(&mut self)
   {
     const NULL_PAIR : (Move, Move) = (NULL_MOVE, NULL_MOVE);
-    self.current_line  = [NOP; 128];
+//  self.current_line  = [NOP; 128];
     self.gainful       = [false; 128];
     self.killer_table  = [NULL_PAIR; 128];
     self.history_table = [[(0, 0); 64]; 16];
-    self.counter_table = [[NOP; 64]; 16];
+//  self.counter_table = [[NOP; 64]; 16];
     self.state_history.clear();
     self.null          = [false; 128];
     self.exclude       = [NULL_MOVE; 128];
     self.nominal       =  0;
+    for x in 0..128 { self.pv[x].clear(); }
   }
 
   pub fn lookup_history(&self, piece : usize, dst : usize, height : u8) -> i8
@@ -121,6 +145,8 @@ impl Context {
     }
   }
 }
+
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 // Search traces are of the form 0mss_rrfz where
 //
@@ -361,7 +387,7 @@ Within Zero-window \x1B[2m{:6.3}\x1B[22m
  ╰──┬── not first ──┬── reduced ──┤ ZwRd ├──┬─── \x1B[2mZwRd\x1B[22m {:6.3}
     │               │             ╰──────╯  │
     │               │                       │
-    │               ╰── unreduced ──────────┴────────────┐
+    │               ╰── unreduced ──────────┴────────────╮
     │                                                    │
     │                                                    │  ╭──────╮  ┌ \x1B[2mZwRd→FwFd\x1B[22m {:6.3}
     ╰── first ───────────────────────────────────────────┴──┤ FwFd ├──┤      \x1B[2mFwFd\x1B[22m {:6.3}

@@ -78,14 +78,17 @@ const MINIMUM_DEPTH : u8 = 4;
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 pub static mut GENERATION : usize = 0;
+pub static mut USE_PREV_GEN : bool = false;
 
 pub static mut GLOBAL_STATISTICS : Statistics = Statistics::new();
 
 static mut ABORT              : bool = false;
 static mut SEARCH_IN_PROGRESS : bool = false;
 
-static mut SUPERVISOR : Option<std::thread::Thread> = None;
-static mut STATISTICS : Vec<Statistics>             = Vec::new();
+static mut SUPERVISOR  : Option<std::thread::Thread> = None;
+static mut NUM_THREADS : usize                       = 0;
+static mut CONTEXT     : Vec<Context>                = Vec::new();
+static mut STATISTICS  : Vec<Statistics>             = Vec::new();
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
@@ -94,9 +97,9 @@ fn threefold(history : &Vec<(u64, bool)>) -> bool
   let current = match history.last() { Some(a) => a.0, None => return false };
   let end = history.len() - 1;
   let mut seen = false;
-  for &(position, capture) in history[0..end].iter().rev() {
+  for &(position, zeroing) in history[0..end].iter().rev() {
     if position == current { if seen { return true; } else { seen = true; } }
-    if capture { return false; }
+    if zeroing { return false; }
   }
   return false;
 }
@@ -105,17 +108,12 @@ fn twofold(history : &Vec<(u64, bool)>) -> bool
 {
   let current = match history.last() { Some(a) => a.0, None => return false };
   let end = history.len() - 1;
-  for &(position, capture) in history[0..end].iter().rev() {
+  for &(position, zeroing) in history[0..end].iter().rev() {
     if position == current { return true; }
-    if capture { return false; }
+    if zeroing { return false; }
   }
   return false;
 }
-
-// TODO don't create new vecs (which will need new allocations when pushed to) for PVs
-//   – move these to the stack and reuse the same 128
-
-// TODO don't bother copying PVs within zero-window searches
 
 fn main_search(
   state    : &mut State,
@@ -128,15 +126,12 @@ fn main_search(
   expected : NodeKind,
   context  : &mut Context,
   stats    : &mut Statistics,
-  pv       : &mut Vec<Move>,
 ) -> i16
 {
-  unsafe {
-    if ABORT && context.nominal > MINIMUM_DEPTH { return 0; }
-  }
+  unsafe { if ABORT && context.nominal > MINIMUM_DEPTH { return 0; } }
 
   // Step 0. Draw-by-repetition detection
-  if height > 0 { if twofold(&context.state_history) { return 0; } }
+  if height > 1 { if twofold(&context.state_history) { return 0; } }
   else        { if threefold(&context.state_history) { return 0; } }
 
   // Step 1. Resolving search
@@ -161,11 +156,22 @@ fn main_search(
 
   let mut hint_move = NULL_MOVE;
   let mut hint_score = 0;
-  let current_generation = unsafe { GENERATION as u16 };
-  let entry = if excluded_move.is_null() { table_lookup(state.key) } else { NULL_ENTRY };
-  // For the time being, we ignore transposition table entries from previous searches,
-  //   which has the same effect as clearing the transposition table.
-  if entry.hint_move != 0 && entry.generation == current_generation {
+
+  let entry =
+    if excluded_move.is_null() {
+      // We mix dfz into the key when dfz is close to 100 to prevent false
+      //   positives and negatives in draw detection due to transpositions.
+      table_lookup(if state.dfz > 92 { state.key ^ state.dfz as u64 } else { state.key })
+    }
+    else {
+      NULL_ENTRY
+    };
+
+  let okay_generation;
+  unsafe {
+    okay_generation = if USE_PREV_GEN { true } else { entry.generation == (GENERATION as u16) };
+  }
+  if entry.hint_move != 0 && okay_generation {
     let score =
       if      entry.hint_score >= MINIMUM_PROVEN_MATE { entry.hint_score - height as i16 }
       else if MINIMUM_PROVEN_LOSS >= entry.hint_score { entry.hint_score + height as i16 }
@@ -192,13 +198,16 @@ fn main_search(
   let mut depth = depth;
 
   // Step 6. Reductions and pruning
+  let mut lower_estimate = i16::MIN;
   let mut futile = false;
+
   if context.nominal > 4 && height > 0 && zerowind && !state.incheck {
 
-    let pieces = state.boards[8*(state.turn as usize) + QUEEN]
-               | state.boards[8*(state.turn as usize) + ROOK]
-               | state.boards[8*(state.turn as usize) + BISHOP]
-               | state.boards[8*(state.turn as usize) + KNIGHT];
+    let ofs = (state.turn as usize) * 8;
+    let pieces = state.boards[ofs + QUEEN ]
+               | state.boards[ofs + ROOK  ]
+               | state.boards[ofs + BISHOP]
+               | state.boards[ofs + KNIGHT];
     let num_pieces = pieces.count_ones();
 
     let static_eval = state.evaluate_in_game();
@@ -207,7 +216,7 @@ fn main_search(
     let upper_estimate = if ignore_hint { static_eval } else { hint_score };
 
     let ignore_hint = hint_move.is_null() || entry.kind == NodeKind::Cut;
-    let lower_estimate = if ignore_hint { static_eval } else { hint_score };
+    lower_estimate = if ignore_hint { static_eval } else { hint_score };
 
     // Step 6a. Reverse futility pruning
     if depth < 8
@@ -227,7 +236,7 @@ fn main_search(
       context.null[height as usize] = true;
       let null_score = -main_search(
         state, (depth-1) - reduction, height+1, -beta, -beta+1, true,
-        NodeKind::All, context, stats, &mut Vec::new()
+        NodeKind::All, context, stats
       );
       state.undo_null();
       state.restore(&metadata);
@@ -236,21 +245,13 @@ fn main_search(
         depth = std::cmp::min(depth - 4, depth / 2);
       }
     }
-
-    // Step 6c. Futility pruning
-    //   TODO move this inside the main loop (since alpha may rise)
-    if depth < 8
-      && alpha > LIKELY_LOSS
-      && lower_estimate + (depth as i16 + 1)*100 < alpha
-    { futile = true; }
-
   }
   context.null[height as usize] = false;
 
   // Step 7. Extensions and multicut
 
   //   Step 7a. Check extension
-  //   TODO should this or the original depth be recorded in the cache update?
+  //   NOTE should this or the original depth be recorded in the cache update?
   if state.incheck { depth += 1; }
 
   //   Step 7b. Singular extension and multicut
@@ -267,7 +268,7 @@ fn main_search(
     context.exclude[height as usize] = hint_move.clone();
     let singular_score = main_search(
       state, depth/2, height, hint_score-margin-1, hint_score-margin, true,
-      expected, context, stats, &mut Vec::new()
+      expected, context, stats
     );
     context.exclude[height as usize] = NULL_MOVE;
     if singular_score >= hint_score-margin {
@@ -287,8 +288,7 @@ fn main_search(
 
   let mut best_score = i16::MIN + 1;
   let mut best_move  = NULL_MOVE;
-  let mut best_line  = Vec::new();
-  let mut  tmp_line  = Vec::new();
+  context.pv[height as usize].clear();
 
   let mut successors   = 0;
   let mut raised_alpha = false;
@@ -329,12 +329,21 @@ fn main_search(
     }
     else {
       mv = match selector.next(state, context) { Some(x) => x, None => break };
+
+      // Step 8b. Futility pruning (set up in step 6)
+      if depth < 8
+        && alpha > LIKELY_LOSS
+        && lower_estimate != i16::MIN
+        && lower_estimate + (depth as i16 + 1)*100 < alpha
+      { futile = true; }
+
       if successors > 1
         && futile
         && !mv.is_gainful()
         && !mv.gives_check()
         && mv.score < 64
       { continue; }
+
       state.apply(&mv);
     }
     successors += 1;
@@ -342,13 +351,12 @@ fn main_search(
     if expected == NodeKind::PV && raised_alpha { expected_child = NodeKind::Cut; }
 
     context.state_history.push((state.key, mv.is_zeroing()));
-    tmp_line.push(mv.clone());
 
     let mut trace = if zerowind { IN_ZW } else { 0 };
     let mut score;
     loop {
       if successors > 1 {
-        // Step 8b. Reduced-depth zero-window search
+        // Step 8c. Reduced-depth zero-window search
         if depth > 2 {
           let mut reduction : i8 = 0;
           if height > 0 && !mv.is_gainful() && successors > 3 {
@@ -364,47 +372,43 @@ fn main_search(
             let next_depth = std::cmp::max(0, depth as i8 - 1 - reduction) as u8;
             score = -main_search(
               state, next_depth, height+1, -alpha-1, -alpha, true,
-              expected_child, context, stats, &mut tmp_line
+              expected_child, context, stats
             );
             if !(score > alpha) { trace |= ZR_OK; break; }
-            tmp_line.clear();
-            tmp_line.push(mv.clone());
           }
         }
-        // Step 8c. Full-depth zero-window search (within a full-window search)
+        // Step 8d. Full-depth zero-window search (within a full-window search)
         if !zerowind {
           trace |= ZF;
           let next_depth = depth - 1;
           score = -main_search(
             state, next_depth, height+1, -alpha-1, -alpha, true,
-            expected_child, context, stats, &mut tmp_line
+            expected_child, context, stats
           );
           if !(score > alpha) { trace |= ZF_OK; break; }
-          tmp_line.clear();
-          tmp_line.push(mv.clone());
         }
       }
       else {
         trace |= FST;
       }
-      // Step 8d. Full-depth full-window search (within a full-window search) or
+      // Step 8e. Full-depth full-window search (within a full-window search) or
       //            zero-window search (within a zero-window search)
       trace |= FF;
       let next_depth = if successors == 1 && extend_hint { depth } else { depth - 1 };
       score = -main_search(
         state, next_depth, height+1, -beta, -alpha, zerowind,
-        expected_child, context, stats, &mut tmp_line
+        expected_child, context, stats
       );
       break;
     }
     debug_assert!(score != i16::MIN, "score was not set");
 
-    // Step 8e. State restoration
+    // Step 8f. State restoration
     context.state_history.pop();
     state.undo(&mv);
     state.restore(&metadata);
 
-    // Step 8f. Tracing
+    // Step 8g. Tracing
     match trace {
       FULL_ETC_ZWRD           => { stats.full_etc_zwrd           += 1; }
       FULL_ETC_ZWRD_ZWFD      => { stats.full_etc_zwrd_zwfd      += 1; }
@@ -419,16 +423,11 @@ fn main_search(
       _ => { panic!("unrecognized trace {:08b}", trace); }
     }
 
-    // Step 8g. Folding
+    // Step 8h. Folding
     if score > best_score {
       best_score = score;
       best_move = mv.clone();
-      // Alternatively,
-      //   std::mem::swap(&mut best_line, &mut tmp_line);
-      // which compiles to the same instructions.
-      let swap = best_line;
-      best_line = tmp_line;
-      tmp_line = swap;
+      context.pv.swap(height as usize, height as usize + 1);
     }
     if score > alpha {
       raised_alpha = true;
@@ -436,7 +435,7 @@ fn main_search(
       last_raise = successors;
     }
 
-    // Step 8h. Beta cutoff
+    // Step 8i. Beta cutoff
     if alpha >= beta {
       if !mv.is_gainful() {
         let killers = &mut context.killer_table[height as usize];
@@ -448,8 +447,6 @@ fn main_search(
       if depth >= 2 { selector.update_history_scores(context, depth); }
       break;
     }
-
-    tmp_line.clear();
   }
 
   // Step 9. Mate detection
@@ -478,7 +475,10 @@ fn main_search(
 
   // Step 11. Transposition table update
   unsafe {
-    if ABORT && context.nominal > MINIMUM_DEPTH { return best_score; }
+    if ABORT && context.nominal > MINIMUM_DEPTH {
+      if kind == NodeKind::PV { context.pv[height as usize].insert(0, best_move); }
+      return best_score;
+    }
   }
 
   if excluded_move.is_null() {
@@ -488,7 +488,7 @@ fn main_search(
       else                                      { best_score                 };
 
     table_update(TableEntry {
-      key:        state.key,
+      key:        if state.dfz > 92 { state.key ^ state.dfz as u64 } else { state.key },
       generation: unsafe { GENERATION as u16 },
       hint_move:  best_move.compress(),
       hint_score: table_score,
@@ -512,7 +512,7 @@ fn main_search(
   }
 
   // Step 13. Returning
-  if kind == NodeKind::PV { pv.append(&mut best_line); }
+  if kind == NodeKind::PV { context.pv[height as usize].insert(0, best_move); }
   return best_score;
 }
 
@@ -525,15 +525,17 @@ fn support(
 )
 {
   let statistics = unsafe { &mut STATISTICS[thread_id] };
-  let mut context = Context::new();
+  let context    = unsafe { &mut    CONTEXT[thread_id] };
   context.state_history = history;
 
-  let mut score = 0;
-  let mut pv = Vec::new();
+  let mut score = resolving_search(&mut state, 0, 0, i16::MIN+1, i16::MAX, context, statistics);
 
   'iterative_deepening: for step in 1..65 {
     let jitter = ((thread_id % 4) + 1) as f64 * 62.5;
-    let init_width = (50.0 + (200.0 + jitter)*((step-1) as f64 * -0.25).exp2()) as i16;
+    let relax = 250.0 + jitter;
+    let tight = (25.0 + (score.abs() as f64)*0.25).min(100.0);
+    let init_width = (tight + (relax-tight)*((step-1) as f64 * -0.25).exp2()) as i16;
+
     let mut alpha_width = init_width;
     let mut  beta_width = init_width;
     let mut alpha_failures = 0;
@@ -541,13 +543,11 @@ fn support(
     let mut searching = true;
     let mut tentative = score;
     while searching {
-      pv.clear();
       let alpha = if alpha_failures >= 2 { i16::MIN+1 } else { score - alpha_width };
       let  beta = if  beta_failures >= 2 { i16::MAX   } else { score +  beta_width };
       context.nominal = step;
       tentative = main_search(
-        &mut state, step, 0, alpha, beta, false,
-        NodeKind::PV, &mut context, statistics, &mut pv
+        &mut state, step, 0, alpha, beta, false, NodeKind::PV, context, statistics
       );
       unsafe {
         if ABORT { break 'iterative_deepening; }
@@ -566,31 +566,38 @@ fn best_move(
   limits    : Limits,
 )
 {
+  // Setup
+
   let statistics = unsafe { &mut STATISTICS[0] };
-  let mut context = Context::new();
+  let context    = unsafe { &mut    CONTEXT[0] };
   context.state_history = history;
 
-  let mut prev_duration = 0.0;
-  let mut branching_factor = 2.0;
+  let mut prev_time_to_depth = 0.0;
+  let mut ratios = [1.5, 1.5, 1.5, 1.5];
   let mut last_best = NULL_MOVE;
   let mut stability = 0;
   let mut activity = 0;
 
   let mut last_step = 0;
   let mut last_pv;
-  let mut pv = Vec::new();
   let mut last_score;
-  let mut score = 0;
+  let mut score =
+    resolving_search(&mut state, 0, 0, i16::MIN+1, i16::MAX, context, statistics);
   let mut best = NULL_MOVE;
+
+  // Iterative deepening loop
 
   let clock = Instant::now();
   'iterative_deepening: for step in 1..(limits.depth+1) {
 
-    // Search at the next depth
+    // Part 1. Search at the next depth
 
-    last_pv = pv;
-    pv = Vec::new();
-    let init_width = (50.0 + 200.0*((step-1) as f64 * -0.25).exp2()) as i16;
+    last_pv = context.pv[0].clone();
+
+    let relax = 250.0;
+    let tight = (25.0 + (score.abs() as f64)*0.25).min(100.0);
+    let init_width = (tight + (relax-tight)*((step-1) as f64 * -0.25).exp2()) as i16;
+
     let mut alpha_width = init_width;
     let mut  beta_width = init_width;
     let mut alpha_failures = 0;
@@ -598,13 +605,11 @@ fn best_move(
     let mut searching = true;
     let mut tentative = score;
     while searching {
-      pv.clear();
       let alpha = if alpha_failures >= 2 { i16::MIN+1 } else { score - alpha_width };
       let  beta = if  beta_failures >= 2 { i16::MAX   } else { score +  beta_width };
       context.nominal = step;
       tentative = main_search(
-        &mut state, step, 0, alpha, beta, false,
-        NodeKind::PV, &mut context, statistics, &mut pv
+        &mut state, step, 0, alpha, beta, false, NodeKind::PV, context, statistics
       );
       unsafe {
         if ABORT && step > MINIMUM_DEPTH { break 'iterative_deepening; }
@@ -615,9 +620,9 @@ fn best_move(
     }
     last_score = score;
     score = tentative;
-    best = if pv.is_empty() { NULL_MOVE } else { pv[0].clone() };
+    best = if context.pv[0].is_empty() { NULL_MOVE } else { context.pv[0][0].clone() };
     last_step = step;
-    let duration = clock.elapsed().as_secs_f64();
+    let time_to_depth = clock.elapsed().as_secs_f64();
 
     if quick_eq(&best, &last_best) {
       stability += 1;
@@ -628,45 +633,48 @@ fn best_move(
     };
     last_best = best.clone();
 
-    // Report to stderr and stdout
+    // Part 2. Report to stderr and stdout
+
+    let mut ext_depth = 0;
+    for x in 0..128 { if statistics.r_nodes_at_height[x] != 0 { ext_depth = x; } }
+
+    let mut nodes = 0;
+    unsafe {
+      let num_threads = NUM_THREADS;
+      for id in 0..num_threads {
+        // These values might be slightly out of date, but we don't mind
+        nodes += STATISTICS[id].m_nodes_at_height.iter().sum::<usize>();
+        nodes += STATISTICS[id].r_nodes_at_height.iter().sum::<usize>();
+      }
+    }
+
+    let nps = nodes as f64 / time_to_depth;
 
     if isatty(STDERR) {
-      if score == last_score && pv == last_pv {
+      if score == last_score && context.pv[0] == last_pv {
         eprint!("{:>2}\r", step);
       }
       else {
         let rectified = if state.turn == Color::Black { -score } else { score };
         eprint!(
-          "{:>2} \x1B[2m{}/{}\x1B[22m {:>6}",
-          step, alpha_failures, beta_failures, format_score(rectified)
+          "{:2} \x1B[2m{}/{}\x1B[22m {:6.3} \x1B[2m{:6}\x1B[22m \x1B[1m{:>6}\x1B[22m",
+          step, alpha_failures, beta_failures,
+          time_to_depth, nodes / 1000, format_score(rectified)
         );
-        for mv in pv.iter() { eprint!(" {}", mv); }
+        for mv in context.pv[0].iter() { eprint!(" {}", mv); }
         eprint!("\n");
       }
     }
-    if !isatty(STDOUT) {
-      let mut ext_depth = 0;
-      for x in 0..128 { if statistics.r_nodes_at_height[x] != 0 { ext_depth = x; } }
-
-      let mut nodes = 0;
-      unsafe {
-        let num_threads = STATISTICS.len();
-        for id in 0..num_threads {
-          // These values might be slightly out of date, but we don't mind
-          nodes += STATISTICS[id].m_nodes_at_height.iter().sum::<usize>();
-          nodes += STATISTICS[id].r_nodes_at_height.iter().sum::<usize>();
-        }
-      }
-
-      let millis = duration * 1000.0;
-      let nps = nodes as f64 / duration;
+    if !isatty(STDOUT) || !isatty(STDERR) {
       print!(
-        "info depth {} seldepth {} nodes {} time {:.0} nps {:.0} score {} pv",
-        step, ext_depth+1, nodes, millis, nps, format_uci_score(score)
+        "info depth {} seldepth {} nodes {} time {:.0} nps {:.0} score {} multipv 1 pv",
+        step, ext_depth+1, nodes, time_to_depth * 1000.0, nps, format_uci_score(score)
       );
-      for mv in pv.iter() { print!(" {}", mv.algebraic()); }
+      for mv in context.pv[0].iter() { print!(" {}", mv.algebraic()); }
       print!("\n");
     }
+
+    // Part 3. Check time management
 
     if step >= MINIMUM_DEPTH {
 
@@ -677,16 +685,33 @@ fn best_move(
 
       // Decide whether to stop early if we're given a target (soft limit)
 
-      if let Some(target) = limits.time_soft {
+      if let Some(target) = limits.target {
 
-        if prev_duration > 0.0 {
-          let ratio = duration / prev_duration;
-          branching_factor = (branching_factor + ratio) * 0.5;
+        // Update the history of time to depth ratios
+        if prev_time_to_depth > 0.0 {
+           ratios = [time_to_depth / prev_time_to_depth, ratios[0], ratios[1], ratios[2]];
         }
-        prev_duration = duration;
-        let estimate = duration * branching_factor;
+        prev_time_to_depth = time_to_depth;
+        // Remove the outlier
+        //   Unfortunately, since f64 doesn't implement Ordering, we can't use max_by_key:
+        //   let (idx, val) =
+        //     ratios.iter().enumerate().max_by_key(|(_, x)| (*x - arith_mean).abs()).unwrap();
+        let arith_mean = ratios.iter().sum::<f64>() * 0.25;
+        let mut idx = 0;
+        let mut dev = (ratios[0] - arith_mean).abs();
+        for x in 1..4 {
+          let d = (ratios[x] - arith_mean).abs();
+          if d >= dev { idx = x; dev = d; }
+        }
+        let outlier = ratios[idx];
+        ratios[idx] = 1.0;
+        // Take the geometric mean
+        let geom_mean = ratios.iter().product::<f64>().cbrt();
+        ratios[idx] = outlier;
+        // Estimate the next time to depth
+        let estimate = time_to_depth * geom_mean;
 
-        if let Some(hard_limit) = limits.time_hard { if estimate > hard_limit { break; } }
+        if let Some(hard_limit) = limits.cutoff { if estimate > hard_limit { break; } }
 
         let downfactor =
           if      stability < 5  { 1.0                                 }
@@ -694,11 +719,11 @@ fn best_move(
           else                   { 0.2                                 };
         let upfactor =
           if      activity < 3  { 1.0                               }
-          else if activity < 10 { 1.0 + 0.1 * (activity - 2) as f64 }
-          else                  { 1.8                               };
+          else if activity < 12 { 1.0 + 0.1 * (activity - 2) as f64 }
+          else                  { 2.0                               };
         let target = target * upfactor * downfactor;
 
-        if estimate - target > target - duration { break; }
+        if estimate - target > target - time_to_depth { break; }
       }
     }
   }
@@ -716,7 +741,7 @@ fn best_move(
   let mut r_nodes = 0;
   let mut leaves  = 0;
   unsafe {
-    let num_threads = STATISTICS.len();
+    let num_threads = NUM_THREADS;
     for id in 0..num_threads {
       // These values might be slightly out of date, but we don't mind
       m_nodes += STATISTICS[id].m_nodes_at_height.iter().sum::<usize>();
@@ -731,22 +756,24 @@ fn best_move(
   if isatty(STDERR) {
     eprintln!("depth {}/{}/{}", last_step, main_depth+1, ext_depth+1);
     eprintln!(
-      "\x1B[2m{:5} knode main {:2.0}%\x1B[22m",
+      "\x1B[2m{:6} knode main {:2.0}%\x1B[22m",
       m_nodes / 1000, m_nodes as f64 * 100.0 / nodes as f64
     );
     eprintln!(
-      "\x1B[2m{:5} knode leaf {:2.0}%\x1B[22m",
+      "\x1B[2m{:6} knode leaf {:2.0}%\x1B[22m",
       leaves / 1000, leaves as f64 * 100.0 / nodes as f64
     );
     eprintln!(
-      "\x1B[2m{:5} knode extn {:2.0}%\x1B[22m",
+      "\x1B[2m{:6} knode extn {:2.0}%\x1B[22m",
       (r_nodes-leaves) / 1000, (r_nodes-leaves) as f64 * 100.0 / nodes as f64
     );
-    eprintln!("{:5} knode", nodes / 1000);
-    eprintln!("{:5.0} knode/s", nps / 1000.0);
-    eprintln!("{:5.2} seconds", duration);
+    eprintln!("{:6} knode", nodes / 1000);
+    eprintln!("{:6.0} knode/s", nps / 1000.0);
+    let num_threads = unsafe { NUM_THREADS };
+    if num_threads > 1 { eprintln!("{:6.0} kn/s/th", nps / (num_threads as f64) / 1000.0); }
+    eprintln!("{:6.3} seconds", duration);
   }
-  if !isatty(STDOUT) {
+  if !isatty(STDOUT) || !isatty(STDERR) {
     println!("bestmove {}", best.algebraic());
   }
 
@@ -756,7 +783,6 @@ fn best_move(
 }
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-// TODO reuse contexts (and reset them) in the way that statistics are reused
 
 fn supervise(
   state       : State,
@@ -765,12 +791,20 @@ fn supervise(
   num_threads : usize,
 )
 {
-  unsafe { SUPERVISOR = Some(std::thread::current()); }
+  unsafe {
+    SUPERVISOR  = Some(std::thread::current());
+    NUM_THREADS = num_threads;
+  }
 
-  let time_limit = limits.time_hard;
+  let time_limit = limits.cutoff;
   let clock = Instant::now();
 
   unsafe {
+    for cntxt in CONTEXT.iter_mut() { cntxt.reset(); }
+    if CONTEXT.len() < num_threads {
+      let deficit = num_threads - CONTEXT.len();
+      for _ in 0..deficit { CONTEXT.push(Context::new()); }
+    }
     for stats in STATISTICS.iter_mut() { stats.reset(); }
     if STATISTICS.len() < num_threads {
       let deficit = num_threads - STATISTICS.len();

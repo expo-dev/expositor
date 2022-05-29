@@ -134,7 +134,7 @@ impl State {
     // Step 3. Generate moves for pinned pieces
 
       // This is how we keep track of which pieces we've generated moves for in this step
-      //   (so that we don't try to generate moves for them in step 3)
+      //   (so that we don't try to generate moves for them in step 5)
       let mut pinned_mask = 0;
 
       for attacker in 1..4 {

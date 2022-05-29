@@ -1,16 +1,28 @@
 use crate::color::*;
 use crate::import::*;
 use crate::piece::*;
-use crate::rand::*;
 use crate::state::*;
 
 fn load_dataset(path : &str) -> std::io::Result<Vec<[f32; 3]>>
 {
   eprint!("Loading...\r");
   let mut game_count = 0usize;
+  let mut skip_count = 0usize;
   let mut dataset = Vec::new();
-  for movelist in PGNReader::open(path)? {
-    let movelist = movelist?;
+  for game in PGNReader::open(path)? {
+    let game = game?;
+    let expo_lost = (game.result == GameResult::White && game.expo_black)
+                 || (game.result == GameResult::Black && game.expo_white);
+    if expo_lost && game.termination == GameTermination::Flag {
+      skip_count += 1;
+      continue;
+    }
+    let r = 2100;
+    if (game.expo_black && game.white_elo < r) || (game.expo_white && game.black_elo < r) {
+      skip_count += 1;
+      continue;
+    }
+    let movelist = &game.movelist;
     let game_length = movelist.len() as u16;
     if !crate::util::isatty(crate::util::STDOUT) {
       print!(" {},", game_length); if game_count % 16 == 15 { print!("\n"); }
@@ -43,132 +55,118 @@ fn load_dataset(path : &str) -> std::io::Result<Vec<[f32; 3]>>
     game_count += 1;
   }
   eprintln!("{:9} games", game_count);
+  eprintln!("{:9} skipped", skip_count);
   eprintln!("{:9} positions", dataset.len());
   return Ok(dataset);
 }
 
-// fn lognorm_model(ply_played : u16) -> f32
-// {
-//   // Fit from human games
-//   let p = ply_played as f32;
-//   return 75.0 + (34777.0 - p*5116.0) / (p*p + p*22.0 + 4881.0);
-// }
-
-// fn lognorm_model(ply_played : u16) -> f32
-// {
-//   // Fit from a log-normal distribution with mean 100 and median 80
-//   let p = ply_played as f32;
-//   return 167.5 - (1148000.0 + p*42120.0) / (p*p + p*282.9 + 17010.0);
-// }
-
-// fn lognorm_model(ply_played : u16) -> f32
-// {
-//   // Fit from a log-normal distribution with mean 120 and median 100
-//   let p = ply_played as f32;
-//   return 122.1 - (22980.0 + p*13700.0) / (p*p + p*75.81 + 11440.0);
-// }
-
-// fn lognorm_model(ply_played : u16) -> f32
-// {
-//   // Fit from a log-normal distribution with mean 140 and median 120
-//   let p = ply_played as f32;
-//   return 107.4 + (297500.0 - p*8729.0) / (p*p + p*22.76 + 9085.0);
-// }
-
-fn error(
-  dataset : &Vec<[f32; 3]>,
-  coeffs  : &[f32; 3],
-) -> (f32, usize)
+// Returns (sum of squared error, count of negative predictions, derivatives w/r/t coeffs)
+fn error(dataset : &Vec<[f32; 3]>, coeffs : &[f32; 3]) -> (f32, usize, [f32; 3])
 {
   let mut err = 0.0;
   let mut neg = 0;
-  for point in dataset {
-    let prediction = coeffs[0]
-                   + coeffs[1] * point[1] // ply
-                   + coeffs[2] * point[2];// pieces
-    let d = prediction - point[0];
-    err += d*d;
+  #[allow(non_snake_case)]
+  let mut dE = [0.0, 0.0, 0.0];
+  for point in dataset.iter() {
+    let prediction = coeffs[0]              // constant
+                   + coeffs[1] * point[1]   // ply
+                   + coeffs[2] * point[2];  // pieces
+    let delta = prediction - point[0];
+    err += delta * delta;
     if prediction < 0.0 { neg += 1; }
+    dE[0] += delta;
+    dE[1] += point[1] * delta;
+    dE[2] += point[2] * delta;
   }
-  return (err, neg);
+  dE[0] *= 2.0;
+  dE[1] *= 2.0;
+  dE[2] *= 2.0;
+  return (err, neg, dE);
 }
 
-fn mean(dataset : &Vec<[f32; 3]>) -> f32
-{
-  let mut sum = 0.0;
-  for point in dataset { sum += point[0]; }
-  return sum / dataset.len() as f32;
-}
-
+// Returns the coefficient of determination
 fn deter(dataset : &Vec<[f32; 3]>, err : f32) -> f32
 {
-  let m = mean(dataset);
   let mut sum = 0.0;
-  for point in dataset {
-    let d = point[0] - m;
+  for point in dataset.iter() { sum += point[0]; }
+  let mean = sum / dataset.len() as f32;
+
+  let mut sum = 0.0;
+  for point in dataset.iter() {
+    let d = point[0] - mean;
     sum += d*d;
   }
   return 1.0 - err / sum;
 }
 
-fn neighbor(
-  coeffs : &[f32; 3],
-  scale  : f32
-) -> [f32; 3]
-{
-  let mut next = coeffs.clone();
-  let axes = [1, 1, 1, 1, 1, 2, 2, 3][rand() as usize % 8];
-  for _ in 0..axes {
-    let idx = rand() as usize % 3;
-    let a = next[idx] + (symmetric_uniform() as f32) * scale;
-    if 150.0 >= a && a >= -150.0 { next[idx] = a; }
-  }
-  return next;
-}
-
 pub fn fit_dataset(path : &str) -> std::io::Result<()>
 {
-  let dataset = load_dataset(path)?.into_iter()
-                                   .filter(|p| 240.0 >= p[0]+p[1] && p[0]+p[1] >= 60.0)
-                                   .collect();
+  let dataset =
+    load_dataset(path)?.into_iter()
+                       .filter(|p| { let ply = p[0]+p[1]; 240.0 >= ply && ply >= 60.0 })
+                       .collect::<Vec<[f32; 3]>>();
 
-  let mut best_coeffs = [0.0; 3];
-  best_coeffs[0] = mean(&dataset);
+  eprintln!("{:9} positions in range", dataset.len());
 
-  let mut best_error = error(&dataset, &best_coeffs).0;
+  //~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-  let mut reach : f32 = 0.0;
-  let mut counter = 0;
-  loop {
-    if counter > 8192 {
-      counter = 0;
-      reach += 0.25;
-      if reach > 1.0 { break; }
+  eprint!("\n");
+  eprintln!("step   opt rate    error     const   ply    men    pgl    cd    neg");
+
+  let mut coeffs = [40.0, -0.25, 2.5];
+  let mut err = error(&dataset, &coeffs);
+
+  let mut rate = 0.1;
+  let mut stray = 0.0;
+  for step in 0..16384 {
+    for x in 0..3 {
+      let denom = (err.0 + err.2[x].abs()).copysign(err.2[x]);
+      coeffs[x] -= err.0 / denom * rate;
     }
-    let next_coeffs = neighbor(&best_coeffs, 0.25 - reach.sqrt()*0.1875);
-    let (next_error, neg_pred) = error(&dataset, &next_coeffs);
-    if next_error < best_error {
-      if reach > 0.0 { reach -= 0.0625; }
-      counter = 0;
-      best_coeffs = next_coeffs;
-      best_error = next_error;
-      let start_estimate = best_coeffs[0] + best_coeffs[2] * 30.0;
+    let prev = err.2;
+    err = error(&dataset, &coeffs);
+
+    let mut flips = 0.0;
+    for x in 0..3 {
+      flips += if prev[x] * err.2[x] < 0.0 { 1.0 } else { 0.0 };
+    }
+    stray = stray * 0.75 + flips;
+    if stray >= 11.0 { rate *= 0.5; stray = 0.0; }
+
+    if step % 64 == 63 {
+      let start_estimate = coeffs[0] + coeffs[2] * 30.0;
       eprint!(
-        "{:9.3} {:+8.3} {:+.3} {:+.3} \x1B[2m{:6.2}\x1B[22m \x1B[94m{:.3}\x1B[39m",
-        best_error / dataset.len() as f32,
-        best_coeffs[0],
-        best_coeffs[1],
-        best_coeffs[2],
+        "\r{:6} \x1B[2m{:.9}\x1B[22m {:9.6} {:+7.3} {:+6.3} {:+6.3} \x1B[2m{:6.2}\x1B[22m \x1B[94m{:.3}\x1B[39m",
+        step+1, rate, (err.0 / (dataset.len() as f32)).sqrt(),
+        coeffs[0], coeffs[1], coeffs[2],
         start_estimate,
-        deter(&dataset, best_error)
+        deter(&dataset, err.0)
       );
-      if neg_pred > 0 {
-        eprint!(" \x1B[91m{:3.1}%\x1B[39m", neg_pred as f32 * 100.0 / dataset.len() as f32);
+      if err.1 > 0 {
+        eprint!(" \x1B[91m{:3.1}%\x1B[39m", err.1 as f32 * 100.0 / dataset.len() as f32);
       }
-      eprint!("\n");
+      else {
+        eprint!("     ");
+      }
     }
-    counter += 1;
   }
-  eprintln!("Done.");
+  eprint!("\n");
+
+  //~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+  eprint!("\n");
+  eprintln!("avg abs dev");
+
+  let mut dev = 0.0;
+  for point in dataset.iter() {
+    let prediction = coeffs[0] + coeffs[1]*point[1] + coeffs[2]*point[2];
+    dev += (prediction - point[0]).abs();
+  }
+
+  eprintln!("{:.3}", dev / (dataset.len() as f32));
+
+  //~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+  eprint!("\n");
   return Ok(());
 }

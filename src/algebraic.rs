@@ -193,6 +193,7 @@ pub fn parse_short(state : &State, short : &str) -> Result<Move, String>
     if matched.is_null() { matched = mv.clone(); }
     else { return Err(format!("multiple matches {} {}", matched.algebraic(), mv.algebraic())); }
   }
+  if matched.is_null() { return Err(String::from("no matches")); }
   return Ok(matched);
 }
 
