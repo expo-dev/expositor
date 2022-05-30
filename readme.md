@@ -1,4 +1,4 @@
-<img src="pic/nameplate-2WN29.svg" style="width: 16em;">
+<img src="pic/nameplate-2WN29.png" style="width: 16em;">
 
 Expositor is a UCI-conforming chess engine for AMD&thinsp;64 / Intel&thinsp;64 systems. You can [play against her on Lichess](https://lichess.org/@/expositor) or download a copy for local use.
 
