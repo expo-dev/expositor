@@ -1,5 +1,7 @@
 #! /usr/bin/env sh
 
+# Setup  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
 if [ $# -ne 1 ]; then
   echo "usage: $0 <version>"
   exit
@@ -10,235 +12,283 @@ BUILD_DATE=$(date +"%-d %b %Y")
 BUILD_TIME=$(date +"%H%M")
 export BUILD="$BUILD_TIME on $BUILD_DATE"
 
+WINLINK='-C link-arg=-Wl,--stack,16777216'
+
+# Intel specific ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
 mkdir -p release/linux/intel/specific
 mkdir -p release/windows/intel/specific
 
 # Netburst (Willamette and later)
 # TODO fix issues with target-feature and tune-cpu
-RUSTFLAGS='-C target-feature=+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-netburst-willamette
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-netburst-willamette.exe
 
 # Netburst (Prescott and later)
 # TODO fix issues with target-feature and tune-cpu
-RUSTFLAGS='-C target-feature=+ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-netburst-prescott
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-netburst-prescott.exe
 
 # Core (Penryn and later)
-RUSTFLAGS='-C target-cpu=penryn -Z tune-cpu=penryn -C target-feature=+sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=penryn -Z tune-cpu=penryn -C target-feature=+sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=penryn -Z tune-cpu=penryn -C target-feature=+sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-core-penryn
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-core-penryn.exe
 
 # Nehalem (Nehalem and later)
-RUSTFLAGS='-C target-cpu=nehalem -Z tune-cpu=nehalem -C target-feature=+sse4.2,+popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=nehalem -Z tune-cpu=nehalem -C target-feature=+sse4.2,+popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=nehalem -Z tune-cpu=nehalem -C target-feature=+sse4.2,+popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-nehalem-nehalem
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-nehalem-nehalem.exe
 
 # Nehalem (Westmere and later)
-RUSTFLAGS='-C target-cpu=westmere -Z tune-cpu=westmere -C target-feature=+sse4.2,+popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=westmere -Z tune-cpu=westmere -C target-feature=+sse4.2,+popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=westmere -Z tune-cpu=westmere -C target-feature=+sse4.2,+popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-nehalem-westmere
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-nehalem-westmere.exe
 
 # Sandy Bridge (Sandy Bridge and later)
-RUSTFLAGS='-C target-cpu=sandybridge -Z tune-cpu=sandybridge -C target-feature=+popcnt,+avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=sandybridge -Z tune-cpu=sandybridge -C target-feature=+popcnt,+avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=sandybridge -Z tune-cpu=sandybridge -C target-feature=+popcnt,+avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-sandybridge-sandybridge
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-sandybridge-sandybridge.exe
 
 # Sandy Bridge (Ivy Bridge and later)
-RUSTFLAGS='-C target-cpu=ivybridge -Z tune-cpu=ivybridge -C target-feature=+popcnt,+avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=ivybridge -Z tune-cpu=ivybridge -C target-feature=+popcnt,+avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=ivybridge -Z tune-cpu=ivybridge -C target-feature=+popcnt,+avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-sandybridge-ivybridge
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-sandybridge-ivybridge.exe
 
 # Haswell (Haswell and later)
-RUSTFLAGS='-C target-cpu=haswell -Z tune-cpu=haswell -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=haswell -Z tune-cpu=haswell -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=haswell -Z tune-cpu=haswell -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-haswell-haswell
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-haswell-haswell.exe
 
 # Haswell (Broadwell and later)
-RUSTFLAGS='-C target-cpu=broadwell -Z tune-cpu=broadwell -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=broadwell -Z tune-cpu=broadwell -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=broadwell -Z tune-cpu=broadwell -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-haswell-broadwell
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-haswell-broadwell.exe
 
 # Skylake (Skylake and later)
-RUSTFLAGS='-C target-cpu=skylake -Z tune-cpu=skylake -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=skylake -Z tune-cpu=skylake -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=skylake -Z tune-cpu=skylake -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-skylake-skylake
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-skylake-skylake.exe
 
 # Sunny Cove (Ice Lake and later)
-RUSTFLAGS='-C target-cpu=icelake-server -Z tune-cpu=icelake-server -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=icelake-server -Z tune-cpu=icelake-server -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=icelake-server -Z tune-cpu=icelake-server -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-sunnycove-icelake
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-sunnycove-icelake.exe
 
 # Cypress Cove (Rocket Lake and later)
-RUSTFLAGS='-C target-cpu=rocketlake -Z tune-cpu=rocketlake -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=rocketlake -Z tune-cpu=rocketlake -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=rocketlake -Z tune-cpu=rocketlake -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-cypresscove-rocketlake
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-cypresscove-rocketlake.exe
 
 # Golden Cove (Alder Lake and later)
-RUSTFLAGS='-C target-cpu=alderlake -Z tune-cpu=alderlake -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=alderlake -Z tune-cpu=alderlake -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=alderlake -Z tune-cpu=alderlake -C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/specific/expo-$VERSION-goldencove-alderlake
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/specific/expo-$VERSION-goldencove-alderlake.exe
+
+# Intel generic  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 mkdir -p release/linux/intel/generic
 mkdir -p release/windows/intel/generic
 
 # Generic Intel (up to SSE2)
-RUSTFLAGS='-C target-feature=+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/generic/expo-$VERSION-intel-sse2
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/generic/expo-$VERSION-intel-sse2.exe
 
 # Generic Intel (up to SSE3)
-RUSTFLAGS='-C target-feature=+sse3,-ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+sse3,-ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+sse3,-ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/generic/expo-$VERSION-intel-sse3
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/generic/expo-$VERSION-intel-sse3.exe
 
 # Generic Intel (up to SSSE3)
-RUSTFLAGS='-C target-feature=+ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+ssse3,-sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/generic/expo-$VERSION-intel-ssse3
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/generic/expo-$VERSION-intel-ssse3.exe
 
 # Generic Intel (up to SSE4.1)
-RUSTFLAGS='-C target-feature=+sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+sse4.1,-sse4.2,-popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/generic/expo-$VERSION-intel-sse41
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/generic/expo-$VERSION-intel-sse41.exe
 
 # Generic Intel (up to SSE4.2 / POPCNT)
-RUSTFLAGS='-C target-feature=+sse4.2,+popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+sse4.2,+popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+sse4.2,+popcnt,-avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/generic/expo-$VERSION-intel-sse42
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/generic/expo-$VERSION-intel-sse42.exe
 
 # Generic Intel (up to AVX)
-RUSTFLAGS='-C target-feature=+popcnt,+avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+popcnt,+avx,-bmi1,-lzcnt,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+popcnt,+avx,-bmi1,-lzcnt,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/generic/expo-$VERSION-intel-avx
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/generic/expo-$VERSION-intel-avx.exe
 
 # Generic Intel (up to AVX2 / LZCNT)
-RUSTFLAGS='-C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+popcnt,+bmi1,+lzcnt,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/intel/generic/expo-$VERSION-intel-avx2
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/intel/generic/expo-$VERSION-intel-avx2.exe
+
+# AMD specific ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 mkdir -p release/linux/amd/specific
 mkdir -p release/windows/amd/specific
 
 # K8 (SSE2)
-RUSTFLAGS='-C target-cpu=k8 -Z tune-cpu=k8 -C target-feature=-popcnt,-lzcnt,+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=k8 -Z tune-cpu=k8 -C target-feature=-popcnt,-lzcnt,+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=k8 -Z tune-cpu=k8 -C target-feature=-popcnt,-lzcnt,+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/specific/expo-$VERSION-k8-sse2
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/specific/expo-$VERSION-k8-sse2.exe
 
 # K8 (SSE3)
-RUSTFLAGS='-C target-cpu=k8-sse3 -Z tune-cpu=k8-sse3 -C target-feature=-popcnt,-lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=k8-sse3 -Z tune-cpu=k8-sse3 -C target-feature=-popcnt,-lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=k8-sse3 -Z tune-cpu=k8-sse3 -C target-feature=-popcnt,-lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/specific/expo-$VERSION-k8-sse3
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/specific/expo-$VERSION-k8-sse3.exe
 
 # K10
-RUSTFLAGS='-C target-cpu=amdfam10 -Z tune-cpu=amdfam10 -C target-feature=+popcnt,+lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=amdfam10 -Z tune-cpu=amdfam10 -C target-feature=+popcnt,+lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=amdfam10 -Z tune-cpu=amdfam10 -C target-feature=+popcnt,+lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/specific/expo-$VERSION-k10
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/specific/expo-$VERSION-k10.exe
 
 # Bulldozer
-RUSTFLAGS='-C target-cpu=bdver1 -Z tune-cpu=bdver1 -C target-feature=+popcnt,+lzcnt,+avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=bdver1 -Z tune-cpu=bdver1 -C target-feature=+popcnt,+lzcnt,+avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=bdver1 -Z tune-cpu=bdver1 -C target-feature=+popcnt,+lzcnt,+avx,-bmi1,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/specific/expo-$VERSION-bulldozer
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/specific/expo-$VERSION-bulldozer.exe
 
 # Piledriver
-RUSTFLAGS='-C target-cpu=bdver2 -Z tune-cpu=bdver2 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=bdver2 -Z tune-cpu=bdver2 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=bdver2 -Z tune-cpu=bdver2 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/specific/expo-$VERSION-piledriver
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/specific/expo-$VERSION-piledriver.exe
 
 # Steamroller
-RUSTFLAGS='-C target-cpu=bdver3 -Z tune-cpu=bdver3 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=bdver3 -Z tune-cpu=bdver3 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=bdver3 -Z tune-cpu=bdver3 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/specific/expo-$VERSION-steamroller
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/specific/expo-$VERSION-steamroller.exe
 
 # Excavator
-RUSTFLAGS='-C target-cpu=bdver4 -Z tune-cpu=bdver4 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=bdver4 -Z tune-cpu=bdver4 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=bdver4 -Z tune-cpu=bdver4 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/specific/expo-$VERSION-excavator
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/specific/expo-$VERSION-excavator.exe
 
 # Zen
-RUSTFLAGS='-C target-cpu=znver1 -Z tune-cpu=znver1 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=znver1 -Z tune-cpu=znver1 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=znver1 -Z tune-cpu=znver1 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/specific/expo-$VERSION-zen1
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/specific/expo-$VERSION-zen1.exe
 
 # Zen 2
-RUSTFLAGS='-C target-cpu=znver2 -Z tune-cpu=znver2 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=znver2 -Z tune-cpu=znver2 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=znver2 -Z tune-cpu=znver2 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/specific/expo-$VERSION-zen2
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/specific/expo-$VERSION-zen2.exe
 
 # Zen 3
-RUSTFLAGS='-C target-cpu=znver3 -Z tune-cpu=znver3 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-cpu=znver3 -Z tune-cpu=znver3 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-cpu=znver3 -Z tune-cpu=znver3 -C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/specific/expo-$VERSION-zen3
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/specific/expo-$VERSION-zen3.exe
+
+# AMD generic  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 mkdir -p release/linux/amd/generic
 mkdir -p release/windows/amd/generic
 
 # Generic AMD (up to SSE2)
-RUSTFLAGS='-C target-feature=-popcnt,-lzcnt,+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=-popcnt,-lzcnt,+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=-popcnt,-lzcnt,+sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/generic/expo-$VERSION-amd-sse2
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/generic/expo-$VERSION-amd-sse2.exe
 
 # Generic AMD (up to SSE3 w/o ABM)
-RUSTFLAGS='-C target-feature=-popcnt,-lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=-popcnt,-lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=-popcnt,-lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/generic/expo-$VERSION-amd-sse3
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/generic/expo-$VERSION-amd-sse3.exe
 
 # Generic AMD (up to SSE3 w/ ABM)
-RUSTFLAGS='-C target-feature=+popcnt,+lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+popcnt,+lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+popcnt,+lzcnt,+sse3,-ssse3,-sse4.1,-sse4.2,-avx,-bmi1,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/generic/expo-$VERSION-amd-sse3+abm
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/generic/expo-$VERSION-amd-sse3+abm.exe
 
 # Generic AMD (up to AVX w/o BMI1)
-RUSTFLAGS='-C target-feature=+popcnt,+lzcnt,+avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+popcnt,+lzcnt,+avx,-bmi1,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+popcnt,+lzcnt,+avx,-bmi1,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/generic/expo-$VERSION-amd-avx
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/generic/expo-$VERSION-amd-avx.exe
 
 # Generic AMD (up to AVX w/ BMI1)
-RUSTFLAGS='-C target-feature=+popcnt,+lzcnt,+avx,+bmi1,-bmi2,-avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+popcnt,+lzcnt,+avx,+bmi1,-bmi2,-avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+popcnt,+lzcnt,+avx,+bmi1,-bmi2,-avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/generic/expo-$VERSION-amd-avx+bmi
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/generic/expo-$VERSION-amd-avx+bmi.exe
 
 # Generic AMD (up to AVX2)
-RUSTFLAGS='-C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2' cargo build --target x86_64-unknown-linux-gnu --release
-RUSTFLAGS='-C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2' cargo build --target x86_64-pc-windows-gnu    --release
+FEATURES='-C target-feature=+popcnt,+lzcnt,+avx,+bmi1,+bmi2,+avx2'
+RUSTFLAGS="$FEATURES $WINLINK" cargo build --target x86_64-pc-windows-gnu    --release
+RUSTFLAGS="$FEATURES"          cargo build --target x86_64-unknown-linux-gnu --release
 mv target/x86_64-unknown-linux-gnu/release/expositor  release/linux/amd/generic/expo-$VERSION-amd-avx2
 mv target/x86_64-pc-windows-gnu/release/expositor.exe release/windows/amd/generic/expo-$VERSION-amd-avx2.exe
+
+# Compression and cleanup  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 rm -r target
 
