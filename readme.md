@@ -2,7 +2,7 @@
 
 Expositor is a UCI-conforming chess engine for AMD&thinsp;64 / Intel&thinsp;64 systems. You can [play against her on Lichess](https://lichess.org/@/expositor) or download a copy for local use.
 
-Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404/index.html) rating of 3118 (which corresponds to a FIDE rating of approximately 3200).[^1] You can read about her background [on the TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
+Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404/index.html) rating of 3118 (which corresponds to a FIDE rating of approximately 3200).[^1] You can read about her background on the [TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
 
 [^1]: Based on a [linear regression](https://www.desmos.com/calculator/nfbvfuiv3l) of current CCRL ratings and [data from Larry Kaufman](http://talkchess.com/forum3/viewtopic.php?f=2&t=77479&sid=83ee4a02e914a54fb23c7f5698b88e40).
 
@@ -95,24 +95,21 @@ If you find any bugs or have any questions, please file an issue on Github or se
 
 ## Versions
 
-| Version | Release Date | Notes                                                      |
-|---------|--------------|------------------------------------------------------------|
-|  2WN29  |  29 May 2022 | Bug fixes, usability improvements, and better time control |
-|  2WQ23  |  23 Feb 2022 | First public release                                       |
+| Version | Release Date | CCRL Blitz | Notes                                                                                   |
+|:-------:|:------------:|:----------:|:----------------------------------------------------------------------------------------|
+|  2WN29  |  29 May 2022 |      ?     | Various fixes, better time control, transposition table persistence, minor improvements |
+|  2WQ23  |  23 Feb 2022 |    3118    | First public release                                                                    |
 
 ## In Progress
 
-**HCE Bootstrapping**&ensp;The neural network is currently trained from positions scored with Stockfish. I'd like to write an evaluator that replicates the personality of early versions of Expositor, train a network from positions scored by Expositor using that evaluator, then train another network from positions scored using the previous network, and so on.
+- **HCE Bootstrapping**&ensp;The neural network is currently trained from positions scored with Stockfish. I'd like to write an evaluator that replicates the personality of early versions of Expositor, train a network from positions scored by Expositor using that evaluator, then train another network from positions scored using the previous network, and so on.
 
-## Pending
+## Planned
 
-**Infrastructure**&ensp;I'd like to write my own automation system (à la OpenBench) that will kick off SPRT testing whenever I push a commit.
-
-**Tuning Search**&ensp;None of the search constants have been tuned! I expect to be able to wring a fair amount of playing strength out of that.
-
-**Experimental Network Architectures**&ensp;I'd like to try using different input features and play around with small convolutional networks.
-
-**Error Tracking Search**&ensp;I've been reading and thinking about this since I started chess programming and at one point it was my primary focus. I'd like to pick it up again, deliver a working proof of concept of my ideas, and then write up my findings.
+- **Infrastructure**&ensp;I'd like to write my own automation system (à la OpenBench) that will kick off SPRT testing whenever I push a commit.
+- **Tuning Search**&ensp;None of the search constants have been tuned! I expect to be able to wring a fair amount of playing strength out of that.
+- **Experimental Network Architectures**&ensp;I'd like to try using different input features and play around with small convolutional networks.
+- **Error Tracking Search**&ensp;I've been reading and thinking about this since I started chess programming and at one point it was my primary focus. I'd like to pick it up again, deliver a working proof of concept of my ideas, and then write up my findings.
 
 ## Acknowledgments
 
