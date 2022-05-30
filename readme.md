@@ -95,10 +95,10 @@ If you find any bugs or have any questions, please file an issue on Github or se
 
 ## Versions
 
-| Version | Release Date | CCRL Blitz | Notes                                                                                   |
-|:-------:|:------------:|:----------:|:----------------------------------------------------------------------------------------|
-|  2WN29  |  29 May 2022 |      ?     | Various fixes, better time control, transposition table persistence, minor improvements |
-|  2WQ23  |  23 Feb 2022 |    3118    | First public release                                                                    |
+| Version | Release Date | CCRL Blitz | Notes                                                  |
+|:-------:|:------------:|:----------:|:-------------------------------------------------------|
+|  2WN29  |  29 May 2022 |      ?     | Various fixes, better time control, other improvements |
+|  2WQ23  |  23 Feb 2022 |    3118    | First public release                                   |
 
 ## In Progress
 
