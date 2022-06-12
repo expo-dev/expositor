@@ -6,13 +6,13 @@ Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404
 
 ## Releases
 
-If you know the microarchitecture of your processor, try using a binary from the appropriate `specific/` directory of a release archive.[^2][^3] If you don't know the microarchitecture of your processor but you do know which features it supports, try using a binary from the appropriate `generic/` directory of a release archive. See the file named `extensions` in this repository for more information about AMD and Intel microarchitectures and the features they support.
+If you know the microarchitecture of your processor, try using a binary from the appropriate `specific/` directory of a release archive.[^1][^2] If you don't know the microarchitecture of your processor but you do know which features it supports, try using a binary from the appropriate `generic/` directory of a release archive. See the file named `extensions` in this repository for more information about AMD and Intel microarchitectures and the features they support.
 
 The binaries include the default network, so you do not need to download a separate copy.
 
-[^2]: I'm not completely confident that I matched the proper cpu-target for some AMD microarchitectures; please let me know if I've made any mistakes.
+[^1]: I'm not completely confident that I matched the proper cpu-target for some AMD microarchitectures; please let me know if I've made any mistakes.
 
-[^3]: I've attempted to include binaries for most consumer desktop hardware but not server or mobile platforms. If you have a Xeon or Atom processor, for example, and want a targeted binary, you'll need to compile from source. Feel free to reach out to me for help or if you'd like me to include a binary for your platform in releases.
+[^2]: I've attempted to include binaries for most consumer desktop hardware but not server or mobile platforms. If you have a Xeon or Atom processor, for example, and want a targeted binary, you'll need to compile from source. Feel free to reach out to me for help or if you'd like me to include a binary for your platform in releases.
 
 ## Building
 
