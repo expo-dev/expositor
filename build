@@ -1,7 +1,7 @@
 #! /usr/bin/env sh
 
 ENCODING=(X WK WQ WR WB WN WP BK BQ BR BB BN BP)
-COMMIT_MONTH=$(git show -s --format=%cd HEAD --date=format:%m)
+COMMIT_MONTH=$(git show -s --format=%cd HEAD --date=format:%-m)
 COMMIT_DAY=$(git show -s --format=%cd HEAD --date=format:%d)
 COMMIT_TIME=$(git show -s --format=%cd HEAD --date=format:%H%M)
 VERSION_BASE="${ENCODING[$COMMIT_MONTH]}$COMMIT_DAY"

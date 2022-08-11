@@ -98,14 +98,16 @@ If you find any bugs or have any questions, please file an issue on Github or se
 |  2WN29  |  29 May 2022 |    3194    | Various fixes, better time control, other improvements |
 |  2WQ23  |  23 Feb 2022 |    3118    | First public release                                   |
 
+## Pending Release
+
+- **Search Tuning**&ensp;Many of the constants in Expositor's search have now been tuned with a variation of SPSA. Along with a few small fixes, this has increased the strength by approximately 100 Elo against 2WN29 in self-play. I expect to make a release with these changes in August or September.
+
 ## In Progress
 
-- **HCE Bootstrapping**&ensp;The neural network is currently trained from positions scored with Stockfish. I'd like to write an evaluator that replicates the personality of early versions of Expositor, train a network from positions scored by Expositor using that evaluator, then train another network from positions scored using the previous network, and so on.
+- **HCE Bootstrapping**&ensp;The neural network is currently trained from positions scored with Stockfish. I'm nearly done writing and training an evaluator with some of the personality of early versions of Expositor; then I'll train a network from positions scored by Expositor using that evaluator, then train another network from positions scored using the previous network, and so on.
 
 ## Planned
 
-- **Infrastructure**&ensp;I'd like to write my own automation system (à la OpenBench) that will kick off SPRT testing whenever I push a commit.
-- **Tuning Search**&ensp;None of the search constants have been tuned! I expect to be able to wring a fair amount of playing strength out of that.
 - **Experimental Network Architectures**&ensp;I'd like to try using different input features and play around with small convolutional networks.
 - **Error Tracking Search**&ensp;I've been reading and thinking about this since I started chess programming and at one point it was my primary focus. I'd like to pick it up again, deliver a working proof of concept of my ideas, and then write up my findings.
 
@@ -132,7 +134,3 @@ If you distribute the program, verbatim or modified, you must provide the source
 If users can interact with a modified version of the program (or a work based on the program) remotely through a computer network, you must provide a way for users to obtain its source.
 
 For more details, see the file named "license" in this repository.
-
-### Note
-
-Although the GNU Affero General Public License is a libre ("free") license in spirit, it is debatable whether programs licensed under its terms meet [the usual definition of libre software](http://www.gnu.org/philosophy/free-sw.html). Two of the freedoms that users of libre software have are the freedom to run the software as they wish, for any purpose, and the freedom to change it. However, the GNU Affero General Public License restricts these freedoms, requiring "the operator of a network server to provide the source code of [a] modified version [...] to the users of that server" (as summarized informally in the preamble). For example, your rights under this license are terminated if you violate section 13 ("Remote Network Interaction"), including (but not limited to) your right to modify the program.
