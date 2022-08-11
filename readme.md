@@ -89,7 +89,7 @@ Expositor is lenient when reading moves &ndash; short algebraic notation can be 
 
 ## Issues
 
-If you find any bugs or have any questions, please file an issue on Github or send me a message.
+If you find any bugs or have any questions, please file an issue on Github or send a message to `expositor` at `fastmail.com`.
 
 ## Versions
 
