@@ -119,7 +119,7 @@ Four sources are currently used to generate training positions:
 - [old Ethereal datasets](http://talkchess.com/forum3/viewtopic.php?t=75350)
 - [the TCEC games archive](https://github.com/TCEC-Chess/tcecgames)
 
-These are processed by Expositor with her quiescing search and the leaves from those searches are then scored with a gold-standard engine, usually some version of [Stockfish](https://github.com/official-stockfish/Stockfish).
+These are processed by Expositor with her quiescing search and the leaves from those searches are then scored with a gold-standard engine, usually some version of [Stockfish](https://github.com/official-stockfish/Stockfish). Those scored leaves are then filtered and the network is trained on the selected positions. (Note that the network and training code is original &ndash; network weights for other engines are not compatible with Expositor.)
 
 Most of the positions used for perft tests are from the [Zahak](https://github.com/amanjpro/zahak) repository.
 
