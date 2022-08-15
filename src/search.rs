@@ -2,6 +2,7 @@ use crate::algebraic::*;
 use crate::cache::*;
 use crate::color::*;
 use crate::context::*;
+use crate::constants::*;
 use crate::misc::*;
 use crate::limits::*;
 use crate::movegen::*;
@@ -128,6 +129,7 @@ fn main_search(
   stats    : &mut Statistics,
 ) -> i16
 {
+  context.pv[height as usize].clear();
   unsafe { if ABORT && context.nominal > MINIMUM_DEPTH { return 0; } }
 
   // Step 0. Draw-by-repetition detection
@@ -151,8 +153,9 @@ fn main_search(
     if alpha >= beta { return alpha; }
   }
 
-  // Step 4. Transposition table lookup
+  // Step 4. Transposition table lookup and internal iterative reduction
   let excluded_move = context.exclude[height as usize].clone();
+  let mut depth = depth;
 
   let mut hint_move = NULL_MOVE;
   let mut hint_score = 0;
@@ -169,7 +172,7 @@ fn main_search(
 
   let okay_generation;
   unsafe {
-    okay_generation = if USE_PREV_GEN { true } else { entry.generation == (GENERATION as u16) };
+    okay_generation = USE_PREV_GEN || (entry.generation == GENERATION as u16);
   }
   if entry.hint_move != 0 && okay_generation {
     let score =
@@ -192,10 +195,12 @@ fn main_search(
       panic!("key collision or decode error");
     }
   }
+  else if height >= 2 && depth >= 6 && excluded_move.is_null() {
+    depth -= 1;
+  }
 
   // Step 5. Snapshot saving
   let metadata = state.save();
-  let mut depth = depth;
 
   // Step 6. Reductions and pruning
   let mut lower_estimate = i16::MIN;
@@ -210,7 +215,10 @@ fn main_search(
                | state.boards[ofs + KNIGHT];
     let num_pieces = pieces.count_ones();
 
-    let static_eval = state.evaluate_in_game();
+    let static_eval =
+      if !hint_move.is_null() && entry.kind == NodeKind::PV { 0 /* this will be ignored */ }
+    //else if depth > 4 { resolving_search(state, 0, height, alpha, beta, context, stats) }
+      else { state.evaluate_in_game() };
 
     let ignore_hint = hint_move.is_null() || entry.kind == NodeKind::All;
     let upper_estimate = if ignore_hint { static_eval } else { hint_score };
@@ -222,7 +230,7 @@ fn main_search(
     if depth < 8
       && num_pieces >= 1
       && !context.null[height as usize - 1]
-      && upper_estimate >= beta + (depth as i16 + 1)*100
+      && upper_estimate >= beta + RFP_OFFSET + (depth as i16)*RFP_SCALE
     { return beta; }
 
     // Step 6b. Null-move reduction and pruning
@@ -231,11 +239,12 @@ fn main_search(
       && !context.null[height as usize - 1]
       && upper_estimate >= beta
     {
-      let reduction = 2 + depth / 8;
+      let reduction = NULL_BASE + (depth as u32)*NULL_SCALE;
+      let null_depth = ((depth as u32)*4096 - reduction) / 4096;
       state.apply_null();
       context.null[height as usize] = true;
       let null_score = -main_search(
-        state, (depth-1) - reduction, height+1, -beta, -beta+1, true,
+        state, null_depth as u8, height+1, -beta, -beta+1, true,
         NodeKind::All, context, stats
       );
       state.undo_null();
@@ -263,11 +272,17 @@ fn main_search(
     && !hint_move.is_null()
     && entry.depth >= depth - 2
     && (entry.kind as u8) & (NodeKind::Cut as u8) != 0
+    && hint_score.abs() < MINIMUM_PROVEN_MATE
   {
-    let margin = 4 * (depth as i16 - 3);
+    let reduction = SSE_BASE + (depth as i32)*SSE_SCALE;
+    let sse_depth = ((depth as u32)*4096 - (reduction as u32)) / 4096;
+
+    let margin = (SSE_MARGIN_OFFSET + (depth as i32)*SSE_MARGIN_SCALE) / 256;
+    let margin = margin as i16;
+
     context.exclude[height as usize] = hint_move.clone();
     let singular_score = main_search(
-      state, depth/2, height, hint_score-margin-1, hint_score-margin, true,
+      state, sse_depth as u8, height, hint_score-margin-1, hint_score-margin, true,
       expected, context, stats
     );
     context.exclude[height as usize] = NULL_MOVE;
@@ -288,7 +303,6 @@ fn main_search(
 
   let mut best_score = i16::MIN + 1;
   let mut best_move  = NULL_MOVE;
-  context.pv[height as usize].clear();
 
   let mut successors   = 0;
   let mut raised_alpha = false;
@@ -334,14 +348,14 @@ fn main_search(
       if depth < 8
         && alpha > LIKELY_LOSS
         && lower_estimate != i16::MIN
-        && lower_estimate + (depth as i16 + 1)*100 < alpha
+        && lower_estimate + FP_OFFSET + (depth as i16)*FP_SCALE < alpha
       { futile = true; }
 
       if successors > 1
         && futile
         && !mv.is_gainful()
         && !mv.gives_check()
-        && mv.score < 64
+        && mv.score < FP_THRESH
       { continue; }
 
       state.apply(&mv);
@@ -361,11 +375,11 @@ fn main_search(
           let mut reduction : i8 = 0;
           if height > 0 && !mv.is_gainful() && successors > 3 {
             let moves_since_raise = (successors - last_raise) as f64;
-            let base = 0.5 * ((depth-1) as f64).log2() * moves_since_raise.log2();
-            reduction = base.floor() as i8;
-            reduction -= mv.score / 64; // division rounds toward zero
-         // reduction -= mv.score >> 6; // shift rounds downward
-            if !zerowind { reduction >>= 1; }
+            let mut r = LMR_BASE
+                      + LMR_SCALE * ((depth-1) as f64).log2() * moves_since_raise.log2()
+                      - HST_SCALE * (mv.score as f64);
+            if !zerowind { r *= FW_RATIO; }
+            reduction = r.floor() as i8;
           }
           if reduction > 0 {
             trace |= ZR;
@@ -451,7 +465,10 @@ fn main_search(
 
   // Step 9. Mate detection
   if successors == 0 {
-    best_score = if state.incheck { PROVEN_LOSS + height as i16 } else { 0 };
+    best_score =
+      if !excluded_move.is_null() { alpha }
+      else if state.incheck { PROVEN_LOSS + height as i16 }
+      else { 0 };
   }
 
   // Step 10. Node classification

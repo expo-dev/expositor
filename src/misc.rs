@@ -13,7 +13,7 @@ impl State {
     let raw = self.evaluate();
     if self.dfz > 20 {
       if self.dfz >= 100 { return 0; }
-      return (raw * 1.25 * (100-self.dfz) as f32).round() as i16;
+      return (raw * (112.5 - 0.625 * self.dfz as f32)).round() as i16;
     }
     else {
       return (raw * 100.0).round() as i16;

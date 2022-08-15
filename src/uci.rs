@@ -9,6 +9,7 @@ use crate::movegen::*;
 use crate::movesel::*;
 use crate::movetype::*;
 use crate::nnue::*;
+use crate::nonsense::*;
 use crate::perft::*;
 use crate::regress::*;
 use crate::resolve::*;
@@ -359,7 +360,7 @@ pub fn uci() -> std::io::Result<()>
           let dataset = ScoredFENReader::open(
             path,
             ScoreUnit::FractionalPawn,
-            ScoreSign::WhitePositive
+            ScoreSign::FlipWhenBlackToMove
           )?;
           for pair in dataset {
             let (score, mut state) = pair.unwrap();
@@ -421,6 +422,35 @@ pub fn uci() -> std::io::Result<()>
         let nodes = statistics.r_nodes_at_height.iter().sum::<usize>();
         eprintln!("{} knodes", (nodes as f64 / 1000.0).round() as usize);
         eprintln!("{} knode/s", (nodes as f64 / 1000.0 / total_duration).round() as usize);
+      }
+
+      "filter" => {
+        let mut context = Context::new();
+        let mut statistics = Statistics::new();
+
+        if let Some(path) = inp.next() {
+          let dataset = ScoredFENReader::open(
+            path,
+            ScoreUnit::FractionalPawn,
+            ScoreSign::LeaveUnchanged,
+          )?;
+          for position in dataset {
+            let (actual_score, mut state) = position?;
+            state.initialize_nnue();
+            let static_score = state.evaluate_in_game() as f32 / 100.0;
+            let resolved_score = resolving_search(
+              &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context, &mut statistics
+            ) as f32 / 100.0;
+            let tactical_diff = compress(static_score) - compress(resolved_score);
+            if tactical_diff.abs() <= 0.1 {
+              println!("{:+.2} {}", actual_score as f32 / 100.0, state.to_fen());
+            }
+          }
+        }
+      }
+
+      "nonsense" => {
+        run_nonsense_openings();
       }
 
       // NNUE  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~

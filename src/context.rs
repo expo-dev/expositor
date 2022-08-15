@@ -1,20 +1,16 @@
 use crate::algebraic::*;
-use crate::misc::*;
 use crate::movetype::*;
 use crate::piece::*;
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-type KillerTable      =    [(Move, Move); 128]; // [height]
-type HistoryTable     = [[(i16, i16); 64]; 16]; // [piece][to-square] -> (score, score)
-type CountermoveTable =         [[Op; 64]; 16]; // [piece][to-square] -> op
+type KillerTable  =    [(Move, Move); 128]; // [height]
+type HistoryTable = [[(i16, i16); 64]; 16]; // [piece][to-square] -> (score, score)
 
 pub struct Context {                      // Read          Written         Index
-//pub current_line   : [  Op; 128],       //   main          main            height
   pub gainful        : [bool; 128],       //   resolving     resolving       length
   pub killer_table   : KillerTable,       //   main          main            height
   pub history_table  : HistoryTable,      //   main          main            ...
-//pub counter_table  : CountermoveTable,  //   main          main            ...
   pub state_history  : Vec<(u64, bool)>,  //   main          setup+main      ...
   pub null           : [bool; 128],       //   main          main            height
   pub exclude        : [Move; 128],       //   main          main            height
@@ -54,11 +50,9 @@ impl Context {
   {
     const NULL_PAIR : (Move, Move) = (NULL_MOVE, NULL_MOVE);
     return Self {
-//    current_line:   [NOP; 128],
       gainful:        [false; 128],
       killer_table:   [NULL_PAIR; 128],
       history_table:  [[(0, 0); 64]; 16],
-//    counter_table:  [[NOP; 64]; 16],
       state_history:  Vec::new(),
       null:           [false; 128],
       exclude:        [NULL_MOVE; 128],
@@ -87,11 +81,9 @@ impl Context {
   pub fn reset(&mut self)
   {
     const NULL_PAIR : (Move, Move) = (NULL_MOVE, NULL_MOVE);
-//  self.current_line  = [NOP; 128];
     self.gainful       = [false; 128];
     self.killer_table  = [NULL_PAIR; 128];
     self.history_table = [[(0, 0); 64]; 16];
-//  self.counter_table = [[NOP; 64]; 16];
     self.state_history.clear();
     self.null          = [false; 128];
     self.exclude       = [NULL_MOVE; 128];

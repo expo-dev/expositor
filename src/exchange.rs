@@ -16,7 +16,7 @@ use crate::state::*;
 //   never become losing, so exchange analysis is unnecessary for determining whether such
 //   captures are winning. It is only needed for determining the margin.
 
-const XCHG_VALUE : [i16; 6] = [1000, 130, 70, 45, 40, 10];
+const XCHG_VALUE : [i16; 6] = [200, 100, 50, 33, 33, 10];
 
 impl State {
   // NOTE that the attacking piece must belong to the side to move. The attacker and target must
@@ -73,6 +73,10 @@ impl State {
     let knight_map = knight_destinations(target_square);
     let king_map = king_destinations(target_square);
 
+    occludes ^= captor_location;
+    let mut diagonals = bishop_destinations(occludes, target_square);
+    let mut straights = rook_destinations(occludes, target_square);
+
     let mut x = 0;
     let mut captor_color = self.turn;
     'swap_off: loop {
@@ -86,7 +90,6 @@ impl State {
       //
       //   if gain[x] < 0 && -gain[x-1] < 0 { break; }
       //
-      occludes ^= captor_location;
       boards[captor_piece as usize] ^= captor_location;
       captive_piece = captor_piece;
       captor_color = !captor_color;
@@ -98,6 +101,8 @@ impl State {
         if pawns != 0 {
           captor_piece = Piece::from_usize(ofs+PAWN);
           captor_location = 1u64 << pawns.trailing_zeros();
+          occludes ^= captor_location;
+          diagonals = bishop_destinations(occludes, target_square);
           break;
         }
         // Knights
@@ -108,30 +113,36 @@ impl State {
           break;
         }
         // Bishops, Rooks, and Queens
-        let diagonals = bishop_destinations(occludes, target_square);
         let bishops = diagonals & boards[ofs+BISHOP];
         if bishops != 0 {
           captor_piece = Piece::from_usize(ofs+BISHOP);
           captor_location = 1u64 << bishops.trailing_zeros();
+          occludes ^= captor_location;
+          diagonals = bishop_destinations(occludes, target_square);
           break;
         }
-        let straights = rook_destinations(occludes, target_square);
         let rooks = straights & boards[ofs+ROOK];
         if rooks != 0 {
           captor_piece = Piece::from_usize(ofs+ROOK);
           captor_location = 1u64 << rooks.trailing_zeros();
+          occludes ^= captor_location;
+          straights = rook_destinations(occludes, target_square);
           break;
         }
         let d_queens = diagonals & boards[ofs+QUEEN];
         if d_queens != 0 {
           captor_piece = Piece::from_usize(ofs+QUEEN);
           captor_location = 1u64 << d_queens.trailing_zeros();
+          occludes ^= captor_location;
+          diagonals = bishop_destinations(occludes, target_square);
           break;
         }
         let s_queens = straights & boards[ofs+QUEEN];
         if s_queens != 0 {
           captor_piece = Piece::from_usize(ofs+QUEEN);
           captor_location = 1u64 << s_queens.trailing_zeros();
+          occludes ^= captor_location;
+          straights = rook_destinations(occludes, target_square);
           break;
         }
         // Kings
@@ -139,6 +150,9 @@ impl State {
         if kings != 0 {
           captor_piece = Piece::from_usize(ofs+KING);
           captor_location = 1u64 << kings.trailing_zeros();
+          occludes ^= captor_location;
+          diagonals = bishop_destinations(occludes, target_square);
+          straights = rook_destinations(occludes, target_square);
           break;
         }
         break 'swap_off;

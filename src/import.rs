@@ -17,8 +17,8 @@ pub enum ScoreUnit {
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum ScoreSign {
-  WhitePositive,
-  PointOfView,
+  LeaveUnchanged,
+  FlipWhenBlackToMove,
 }
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
@@ -116,7 +116,7 @@ fn scored_state_from_fen(
     }
     return match State::from_fen_fields(&mut fields) {
       Ok(state) => {
-        let flip = sign == ScoreSign::WhitePositive && state.turn == Color::Black;
+        let flip = sign == ScoreSign::FlipWhenBlackToMove && state.turn == Color::Black;
         Ok((if flip { -score } else { score }, state))
       }
       Err(msg) => Err(Error::new(ErrorKind::Other, msg))

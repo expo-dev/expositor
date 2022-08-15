@@ -95,16 +95,16 @@ impl MoveSelector {
             // Put promotions after captures that might win a queen or rook's
             //   worth of material but before captures that win anything less
             // It's not clear how to easily score en passant, so we simply
-            //   score it as a neutral capture
+            //   score it as cleanly winning a pawn
             if mv.is_unusual() {
-              mv.score = if mv.is_promotion() { 60 / 2 } else { 0 };
+              mv.score = if mv.is_promotion() { 40 } else { 10 };
               continue;
             }
             let attacker = Op {square: mv.src, piece: mv.piece};
             let target = Op {square: mv.dst, piece: mv.captured};
             let prediction = state.analyze_exchange(attacker, target);
-            debug_assert!(prediction.abs() < 256, "absurd prediction {}", prediction);
-            mv.score = (prediction / 2) as i8;
+            debug_assert!(prediction.abs() < 128, "absurd prediction {}", prediction);
+            mv.score = prediction as i8;
           }
           self.stage = Stage::EmitWinningNeutralCaptures;
           continue;
