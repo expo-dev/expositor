@@ -50,13 +50,13 @@ impl Context {
   {
     const NULL_PAIR : (Move, Move) = (NULL_MOVE, NULL_MOVE);
     return Self {
-      gainful:        [false; 128],
-      killer_table:   [NULL_PAIR; 128],
-      history_table:  [[(0, 0); 64]; 16],
-      state_history:  Vec::new(),
-      null:           [false; 128],
-      exclude:        [NULL_MOVE; 128],
-      nominal:        0,
+      gainful:       [false; 128],
+      killer_table:  [NULL_PAIR; 128],
+      history_table: [[(0, 0); 64]; 16],
+      state_history: Vec::new(),
+      null:          [false; 128],
+      exclude:       [NULL_MOVE; 128],
+      nominal:       0,
       pv: [
         Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
         Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),

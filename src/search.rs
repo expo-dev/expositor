@@ -12,6 +12,7 @@ use crate::piece::*;
 use crate::resolve::*;
 use crate::score::*;
 use crate::state::*;
+use crate::tablebase::*;
 use crate::util::*;
 
 use std::time::{Instant, Duration};
@@ -144,7 +145,7 @@ fn main_search(
   let mut alpha = alpha;
   let mut beta  = beta;
 
-  // Step 3. Mate-distance pruning
+  // Step 3. Mate-distance pruning and internal tablebase access
   if height > 0 {
     let worst_possible = PROVEN_LOSS + (height as i16);
     let  best_possible = PROVEN_MATE - (height as i16 + 1);
@@ -152,6 +153,12 @@ fn main_search(
     beta  = std::cmp::min( beta,  best_possible);
     if alpha >= beta { return alpha; }
   }
+
+  if height > 0
+    && state.rights == 0
+    && (state.sides[W] | state.sides[B]).count_ones() == 3
+    && state.dfz == 0
+  { return probe_3man(state, height as i16); }
 
   // Step 4. Transposition table lookup and internal iterative reduction
   let excluded_move = context.exclude[height as usize].clone();
@@ -684,10 +691,13 @@ fn best_move(
     }
     if !isatty(STDOUT) || !isatty(STDERR) {
       print!(
-        "info depth {} seldepth {} nodes {} time {:.0} nps {:.0} score {} multipv 1 pv",
+        "info depth {} seldepth {} nodes {} time {:.0} nps {:.0} score {}",
         step, ext_depth+1, nodes, time_to_depth * 1000.0, nps, format_uci_score(score)
       );
-      for mv in context.pv[0].iter() { print!(" {}", mv.algebraic()); }
+      if !context.pv[0].is_empty() {
+        print!(" multipv 1 pv");
+        for mv in context.pv[0].iter() { print!(" {}", mv.algebraic()); }
+      }
       print!("\n");
     }
 

@@ -36,6 +36,7 @@ mod show      ;
 mod simd      ;
 mod span      ;
 mod state     ;
+mod tablebase ;
 mod test      ;
 mod training  ;
 mod uci       ;
@@ -61,5 +62,6 @@ fn main() -> std::io::Result<()>
   }
   dest::generate_tables();
   cache::initialize_cache(uci::cache_size_default);
+  tablebase::build_3man();
   return uci::uci();
 }

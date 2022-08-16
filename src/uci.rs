@@ -15,8 +15,10 @@ use crate::regress::*;
 use crate::resolve::*;
 use crate::search::*;
 use crate::show::*;
+use crate::tablebase::*;
 use crate::test::*;
 use crate::training::*;
+use crate::score::*;
 use crate::state::*;
 use crate::util::*;
 
@@ -219,6 +221,27 @@ pub fn uci() -> std::io::Result<()>
       // Search  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
       "go" => {
+        if root.rights == 0 && (root.sides[W] | root.sides[B]).count_ones() == 3 {
+          let (score, pv) = probe_3man_line(&mut root);
+          let best = if pv.is_empty() { NULL_MOVE } else { pv[0].clone() };
+          if isatty(STDERR) {
+            let rectified = if root.turn == Color::Black { -score } else { score };
+            eprint!("TB \x1B[1m{:>6}\x1B[22m", format_score(rectified));
+            for mv in pv.iter() { eprint!(" {}", mv); }
+            eprint!("\n");
+          }
+          if !isatty(STDOUT) || !isatty(STDERR) {
+            print!("info depth 64 seldepth 64 nodes 1 time 0 score {}", format_uci_score(score));
+            if !pv.is_empty() {
+              print!(" multipv 1 pv");
+              for mv in pv { print!(" {}", mv.algebraic()); }
+            }
+            print!("\n");
+            println!("bestmove {}", best.algebraic());
+          }
+          continue;
+        }
+
         let mut params = SearchParams::new();
         while let Some(opt) = inp.next() {
           if opt == "infinite" {
