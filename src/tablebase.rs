@@ -156,7 +156,7 @@ fn build_3man_subtable(x : usize) {
 
   // First we go through and mark whether each position is legal. For a position
   //   to be legal, pawns can't be on the last rank, pieces can't be on top of
-  //   each other and the side to move cannot already be giving check.
+  //   each other, and the side to move cannot already be giving check.
 
   for akx in 0..32 {      // attacking king index
     for aps in 0..64 {    // attacking piece square
@@ -342,6 +342,7 @@ pub fn probe_3man(state : &State, height : i16) -> i16 {
 
   let composite = state.sides[W] | state.sides[B];
   let piece_board = composite ^ (state.boards[WHITE+KING] | state.boards[BLACK+KING]);
+  if piece_board == 0 { return 0; } // We've been lied to – this is actually KvK!
   let mut atk_piece = piece_board.trailing_zeros() as usize;
 
   let piece_type = state.squares[atk_piece].kind();
@@ -400,6 +401,8 @@ pub fn probe_3man_line(state : &mut State) -> (i16, Vec<Move>)
   if best_score == i16::MIN {
     return (if state.incheck { PROVEN_LOSS } else { 0 }, Vec::new());
   }
+
+  if best_score == 0 { return (0, vec!(best_move)); }
 
   state.apply(&best_move);
   let (_, mut pv) = probe_3man_line(state);

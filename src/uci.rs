@@ -226,7 +226,7 @@ pub fn uci() -> std::io::Result<()>
           let best = if pv.is_empty() { NULL_MOVE } else { pv[0].clone() };
           if isatty(STDERR) {
             let rectified = if root.turn == Color::Black { -score } else { score };
-            eprint!("TB \x1B[1m{:>6}\x1B[22m", format_score(rectified));
+            eprint!("TB \x1B[1m{:>4}\x1B[22m", format_score(rectified));
             for mv in pv.iter() { eprint!(" {}", mv); }
             eprint!("\n");
           }
