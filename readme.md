@@ -108,7 +108,7 @@ You can try these improvements and features by checking out the `preview` branch
 
 ## In Progress
 
-- **HCE Bootstrapping**&ensp;The neural network is currently trained from positions scored with Stockfish. I'm nearly done writing and training an evaluator with some of the personality of early versions of Expositor; then I'll train a network from positions scored by Expositor using that evaluator, then train another network from positions scored using the previous network, and so on.
+- **HCE Bootstrapping**&ensp;The neural network is currently trained from positions scored with Stockfish. I'm nearly done writing and training an evaluator with a personality that is true to her existing versions, past and present; then I'll train a network from positions scored by Expositor using that evaluator, then train another network from positions scored using the previous network, and so on.
 
 ## Planned
 
