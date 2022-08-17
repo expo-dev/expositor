@@ -100,7 +100,11 @@ If you find any bugs or have any questions, please file an issue on Github or se
 
 ## Pending Release
 
-- **Search Tuning**&ensp;Many of the constants in Expositor's search have now been tuned with a variation of SPSA. Along with a few small fixes, this has increased the strength by approximately 100 Elo against 2WN29 in self-play. I expect to make a release with these changes in August or September.
+You can try these improvements and features by checking out the `preview` branch.
+
+- **Search Tuning**&ensp;Many of the constants in Expositor's search have now been tuned with a variation of SPSA. Along with a few small fixes, this has increased the strength by approximately 120 Elo against 2WN29 in self-play. I expect to make a release with these changes in August or September.
+
+- **Internal Tablebases**&ensp;Expositor now has with an internal 3-man tablebase and I'm working on an optional 4-man tablebase. This will not increase her strength, since her endgame heuristics are sufficient for 4-man endgames besides some KBN&thinsp;_v_&thinsp;K positions, but I wanted a break from work on the HCE bootstrapping and thought it would be fun.
 
 ## In Progress
 
@@ -108,8 +112,9 @@ If you find any bugs or have any questions, please file an issue on Github or se
 
 ## Planned
 
-- **Experimental Network Architectures**&ensp;I'd like to try using different input features and play around with small convolutional networks.
-- **Error Tracking Search**&ensp;I've been reading and thinking about this since I started chess programming and at one point it was my primary focus. I'd like to pick it up again, deliver a working proof of concept of my ideas, and then write up my findings.
+- **Experimental Network Architectures**&ensp;I'd like to try using different input features, play around with small convolutional networks, and test novel evaluator ideas.
+
+- **Error Distribution Search**&ensp;I've been reading and thinking about this since I started chess programming and at one point it was my primary focus. I'd like to pick it up again, deliver a working proof of concept, and then write up my findings.
 
 ## Acknowledgments
 
