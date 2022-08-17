@@ -104,7 +104,7 @@ You can try these improvements and features by checking out the `preview` branch
 
 - **Search Tuning**&ensp;Many of the constants in Expositor's search have now been tuned with a variation of SPSA. Along with a few small fixes, this has increased the strength by approximately 120 Elo against 2WN29 in self-play. I expect to make a release with these changes in August or September.
 
-- **Internal Tablebases**&ensp;Expositor now has with an internal 3-man tablebase and I'm working on an optional 4-man tablebase. This will not increase her strength, since her endgame heuristics are sufficient for 4-man endgames besides some KBN&thinsp;_v_&thinsp;K positions, but I wanted a break from work on the HCE bootstrapping and thought it would be fun.
+- **Internal Tablebases**&ensp;Expositor now has an internal 3-man tablebase and I'm working on an optional 4-man tablebase. This will not increase her strength, since her endgame heuristics are sufficient for 4-man endgames besides some KBN&thinsp;_v_&thinsp;K positions, but I wanted a break from work on the HCE bootstrapping and thought it would be fun.
 
 ## In Progress
 
