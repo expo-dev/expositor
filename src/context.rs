@@ -7,6 +7,7 @@ use crate::piece::*;
 type KillerTable  =    [(Move, Move); 128]; // [height]
 type HistoryTable = [[(i16, i16); 64]; 16]; // [piece][to-square] -> (score, score)
 
+#[repr(align(64))]
 pub struct Context {                      // Read          Written         Index
   pub gainful        : [bool; 128],       //   resolving     resolving       length
   pub killer_table   : KillerTable,       //   main          main            height
@@ -18,6 +19,7 @@ pub struct Context {                      // Read          Written         Index
   pub pv             : [Vec<Move>; 128]   //   main          main            height
 }
 
+#[repr(align(64))]
 pub struct Statistics {
   pub m_nodes_at_height : [usize; 128],
   pub r_nodes_at_height : [usize; 128],

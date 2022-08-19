@@ -564,6 +564,8 @@ fn support(
 {
   let statistics = unsafe { &mut STATISTICS[thread_id] };
   let context    = unsafe { &mut    CONTEXT[thread_id] };
+  statistics.reset();
+  context.reset();
   context.state_history = history;
 
   let mut score = resolving_search(&mut state, 0, 0, i16::MIN+1, i16::MAX, context, statistics);
@@ -608,6 +610,8 @@ fn best_move(
 
   let statistics = unsafe { &mut STATISTICS[0] };
   let context    = unsafe { &mut    CONTEXT[0] };
+  statistics.reset();
+  context.reset();
   context.state_history = history;
 
   let mut prev_time_to_depth = 0.0;
@@ -841,12 +845,10 @@ fn supervise(
   let clock = Instant::now();
 
   unsafe {
-    for cntxt in CONTEXT.iter_mut() { cntxt.reset(); }
     if CONTEXT.len() < num_threads {
       let deficit = num_threads - CONTEXT.len();
       for _ in 0..deficit { CONTEXT.push(Context::new()); }
     }
-    for stats in STATISTICS.iter_mut() { stats.reset(); }
     if STATISTICS.len() < num_threads {
       let deficit = num_threads - STATISTICS.len();
       for _ in 0..deficit { STATISTICS.push(Statistics::new()); }
