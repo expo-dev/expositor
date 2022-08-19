@@ -18,6 +18,11 @@ macro_rules! simd_load {
 
 pub(crate) use simd_load;
 
+// See the following:
+//   https://stackoverflow.com/questions/6996764
+//   https://stackoverflow.com/questions/13219146
+//   https://stackoverflow.com/questions/13879609
+//   https://stackoverflow.com/questions/41303780
 #[cfg(target_feature="avx")]
 pub fn horizontal_sum(x : Simd<f32, 8>) -> f32
 {

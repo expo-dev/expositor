@@ -44,7 +44,7 @@ impl MoveType {
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct Move {
   pub src        : i8,

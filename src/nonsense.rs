@@ -8,13 +8,13 @@ use std::collections::HashSet;
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-const opening_len :    u8 = 8;
-const randomize   :  bool = true;
-const seed        :   u64 = 0;
-const max_branch  : usize = 8;
+const OPENING_LEN :    u8 = 8;
+const RANDOMIZE   :  bool = true;
+const SEED        :   u64 = 0;
+const MAX_BRANCH  : usize = 8;
 
-const restrict  : Rest = Rest::ViableLeaves;
-const max_score :  i16 = 200;
+const RESTRICT  : Rest = Rest::ViableLeaves;
+const MAX_SCORE :  i16 = 200;
 
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
@@ -29,7 +29,7 @@ enum Rest {         // Restriction
 
 pub fn run_nonsense_openings()
 {
-  set_rand(seed);
+  set_rand(SEED);
 
   let mut state = State::new();
   let mut context = Context::new();
@@ -37,7 +37,7 @@ pub fn run_nonsense_openings()
   state.initialize_nnue();
 
   let mut visited = HashSet::new();
-  nonsense_openings(&mut state, &mut context, &mut stats, opening_len, &mut visited);
+  nonsense_openings(&mut state, &mut context, &mut stats, OPENING_LEN, &mut visited);
 }
 
 fn nonsense_openings(
@@ -49,10 +49,10 @@ fn nonsense_openings(
 )
 {
   if !visited.insert(state.key ^ (depth as u64)) { return; }
-  if restrict != Rest::Unrestricted {
-    let score = resolving_search(state, 0, 0, -(max_score+50), max_score+50, context, stats);
-    if restrict == Rest::ViableLines || depth == 0 {
-      if score.abs() > max_score { return; }
+  if RESTRICT != Rest::Unrestricted {
+    let score = resolving_search(state, 0, 0, -(MAX_SCORE+50), MAX_SCORE+50, context, stats);
+    if RESTRICT == Rest::ViableLines || depth == 0 {
+      if score.abs() > MAX_SCORE { return; }
     }
   }
   if depth == 0 {
@@ -64,16 +64,16 @@ fn nonsense_openings(
   let mut  late_moves = Vec::with_capacity(32);
   state.generate_legal_moves(Selectivity::Everything, &mut early_moves, &mut late_moves);
   let mut num_explored = 0;
-  if randomize {
+  if RANDOMIZE {
     early_moves.append(&mut late_moves);
     let num_moves = early_moves.len();
-    let num_swap = num_moves.min(max_branch);
+    let num_swap = num_moves.min(MAX_BRANCH);
     for x in 0..num_swap {
       let k = rand() as usize % (num_moves - x);
       early_moves.swap(x, x+k);
     }
     for mv in early_moves {
-      if num_explored >= max_branch { break; }
+      if num_explored >= MAX_BRANCH { break; }
       state.apply(&mv);
       nonsense_openings(state, context, stats, depth-1, visited);
       state.undo(&mv);
@@ -83,7 +83,7 @@ fn nonsense_openings(
   }
   else {
     for mv in early_moves {
-      if num_explored >= max_branch { break; }
+      if num_explored >= MAX_BRANCH { break; }
       state.apply(&mv);
       nonsense_openings(state, context, stats, depth-1, visited);
       state.undo(&mv);
@@ -91,7 +91,7 @@ fn nonsense_openings(
       num_explored += 1;
     }
     for mv in late_moves {
-      if num_explored >= max_branch { break; }
+      if num_explored >= MAX_BRANCH { break; }
       state.apply(&mv);
       nonsense_openings(state, context, stats, depth-1, visited);
       state.undo(&mv);

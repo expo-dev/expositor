@@ -7,6 +7,8 @@ use crate::score::*;
 use std::fs::File;
 use std::io::{BufReader, BufRead, Error, ErrorKind};
 
+const BUFSIZE : usize = 2097152;
+
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -29,19 +31,23 @@ pub struct       PGNReader { reader : BufReader<File>, line : usize }
 
 impl FENReader {
   pub fn open(path : &str) -> std::io::Result<Self> {
-    return Ok(Self { reader: BufReader::new(File::open(path)?) });
+    return Ok(Self { reader: BufReader::with_capacity(BUFSIZE, File::open(path)?) });
   }
 }
 
 impl ScoredFENReader {
   pub fn open(path : &str, unit : ScoreUnit, sign : ScoreSign) -> std::io::Result<Self> {
-    return Ok(Self { reader: BufReader::new(File::open(path)?), unit: unit, sign: sign });
+    return Ok(Self {
+      reader: BufReader::with_capacity(BUFSIZE, File::open(path)?),
+      unit: unit,
+      sign: sign
+    });
   }
 }
 
 impl PGNReader {
   pub fn open(path : &str) -> std::io::Result<Self> {
-    return Ok(Self { reader: BufReader::new(File::open(path)?), line: 0 });
+    return Ok(Self { reader: BufReader::with_capacity(BUFSIZE, File::open(path)?), line: 0 });
   }
 }
 

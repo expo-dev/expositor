@@ -130,11 +130,16 @@ fn main_search(
   stats    : &mut Statistics,
 ) -> i16
 {
+  table_prefetch(state.key);
+
   context.pv[height as usize].clear();
   unsafe { if ABORT && context.nominal > MINIMUM_DEPTH { return 0; } }
 
-  // Step 0. Draw-by-repetition detection
-  if height > 1 { if twofold(&context.state_history) { return 0; } }
+  // Step 0. 50-move rule and draw-by-repetition detection
+  // The condition for two-fold repetition needs to be
+  //   at least "height > 1" to prevent false draw scores.
+  if state.dfz > 100 { return 0; }
+  if height > 3 { if twofold(&context.state_history) { return 0; } }
   else        { if threefold(&context.state_history) { return 0; } }
 
   // Step 1. Resolving search
@@ -154,11 +159,14 @@ fn main_search(
     if alpha >= beta { return alpha; }
   }
 
-  if height > 0
-    && state.rights == 0
-    && (state.sides[W] | state.sides[B]).count_ones() == 3
-    && state.dfz == 0
-  { return probe_3man(state, height as i16); }
+  if height > 0 && state.rights == 0 && state.dfz == 0
+  {
+    let men = (state.sides[W] | state.sides[B]).count_ones();
+    /* ↓↓↓ INCOMPLETE ↓↓↓ //
+    if men == 4 { return probe_4man(state, height as i16); }
+    // ↑↑↑ INCOMPLETE ↑↑↑ */
+    if men == 3 { return probe_3man(state, height as i16); }
+  }
 
   // Step 4. Transposition table lookup and internal iterative reduction
   let excluded_move = context.exclude[height as usize].clone();
@@ -257,6 +265,9 @@ fn main_search(
       state.undo_null();
       state.restore(&metadata);
       if null_score >= beta {
+        // At high depths, add verification search? (regular search at low depth)
+        //   Verification search is required to also equal or exceed beta to
+        //   actually perform the pruning.
         if num_pieces >= 2 { return null_score; }
         depth = std::cmp::min(depth - 4, depth / 2);
       }
@@ -477,6 +488,9 @@ fn main_search(
       else if state.incheck { PROVEN_LOSS + height as i16 }
       else { 0 };
   }
+  else if state.dfz == 100 {
+    best_score = 0;
+  }
 
   // Step 10. Node classification
   let kind =
@@ -489,7 +503,7 @@ fn main_search(
     else if !raised_alpha { NodeKind::All }
     // When alpha equals beta, we can only declare this an exact score when we
     //   searched every node!
-    // There's an additional edge case, introduced by mate distance pruning. When we
+    // There's an additional edge case, introduced by mate-distance pruning. When we
     //   artificially manipulate alpha and beta, we lose information and are unable to
     //   distinguish Cut nodes from PV nodes when alpha == beta.
     else if alpha == beta &&

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 #![allow(non_upper_case_globals)]
+#![allow(unused_macros)]
 
 #![feature(iter_intersperse)]
 #![feature(maybe_uninit_uninit_array)]
@@ -52,6 +53,7 @@ mod zobrist   ;
 // TODO for toggling color, consider ^ 8. Also consider adding an as_offset function.
 // TODO for clearing the last bit, consider a function.
 //   (No need for an intrinsic; LLVM recognizes the pattern.)
+// TODO go through uses of unwrap and see if let Some or ? can be used
 // TODO consistent comment styling
 
 fn main() -> std::io::Result<()>
@@ -61,7 +63,10 @@ fn main() -> std::io::Result<()>
     eprintln!("Expositor {} \x1B[2mbuilt at {}\x1B[22m", util::VERSION, util::BUILD);
   }
   dest::generate_tables();
-  cache::initialize_cache(uci::cache_size_default);
+  cache::initialize_cache(uci::CACHE_SIZE_DEFAULT);
   tablebase::build_3man();
+  /* ↓↓↓ INCOMPLETE ↓↓↓ //
+  tablebase::build_4man();
+  // ↑↑↑ INCOMPLETE ↑↑↑ */
   return uci::uci();
 }

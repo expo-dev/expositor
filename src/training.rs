@@ -234,7 +234,8 @@ impl TrainingNetwork {
   {
     #![allow(non_snake_case)]
     let prediction = self.forward(state);
-    let dE_ds3 =(compress(prediction) - compress(target)) * d_compress(prediction);
+    let dE_ds3 =
+      (harsh_compress(prediction) - harsh_compress(target)) * d_harsh_compress(prediction);
     self.backward(dE_ds3);
     return prediction;
   }
@@ -434,7 +435,7 @@ pub fn train_nnue(
           for _ in 0..batch_size_per_thread {
             let (score, state) = unsafe { &TRAINING_SET[index] };
             let prediction = network.train(state, *score);
-            let error = compress(prediction) - compress(*score);
+            let error = harsh_compress(prediction) - harsh_compress(*score);
             total_error += error * error;
             index += num_threads;
           }
@@ -515,7 +516,7 @@ pub fn train_nnue(
     let mut total_error = 0.0;
     for (score, state) in testing_set {
       let prediction = network.forward(&state);
-      let error = compress(prediction) - compress(score);
+      let error = harsh_compress(prediction) - harsh_compress(score);
       total_error += error * error;
     }
     let testing_error = total_error / testing_size as f32;

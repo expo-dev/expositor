@@ -116,17 +116,40 @@ pub fn relu(x : f32) -> f32 { return x.max(x / 32.0); }
 
 pub fn d_relu(x : f32) -> f32 { return if x < 0.0 { 0.03125 } else { 1.0 }; }
 
-pub fn compress(x : f32) -> f32
+pub fn harsh_compress(x : f32) -> f32
 {
   // NOTE This is an approximation of logistic(logarithmic(x)),
   //   but scaled so that compress(1) = 1 and the asymptotes are ±2.
   return (1.0 + (x.abs() - 1.0) / (x.abs() + 1.0)).copysign(x);
 }
 
-pub fn d_compress(x : f32) -> f32
+pub fn d_harsh_compress(x : f32) -> f32
 {
   let denom = x.abs() + 1.0;
   return 2.0 / (denom * denom);
+}
+
+pub fn compress(x : f32) -> f32
+{
+  return (1.0 + (x.abs()*0.5 - 1.0) / (x.abs()*0.5 + 1.0)).copysign(x);
+}
+
+pub fn d_compress(x : f32) -> f32
+{
+  let denom = x.abs() + 2.0;
+  return 4.0 / (denom * denom);
+}
+
+pub fn gentle_compress(x : f32) -> f32
+{
+  let thd = 0.333_333_333;
+  return (1.0 + (x.abs()*thd - 1.0) / (x.abs()*thd + 1.0)).copysign(x);
+}
+
+pub fn d_gentle_compress(x : f32) -> f32
+{
+  let denom = x.abs() + 3.0;
+  return 6.0 / (denom * denom);
 }
 
 /* ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~

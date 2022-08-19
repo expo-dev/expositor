@@ -9,10 +9,10 @@ use crate::state::*;
 impl State {
   pub fn evaluate_in_game(&self) -> i16
   {
+    if self.dfz >= 100 { return 0; }
     if let Some(score) = self.endgame() { return score; }
     let raw = self.evaluate();
     if self.dfz > 20 {
-      if self.dfz >= 100 { return 0; }
       return (raw * (112.5 - 0.625 * self.dfz as f32)).round() as i16;
     }
     else {
@@ -48,11 +48,14 @@ pub enum NodeKind {
 #[inline] pub fn vmirror(x : usize) -> usize { return x ^ 56; }
 #[inline] pub fn  rotate(x : usize) -> usize { return x ^ 63; }
 
-pub const FILE_A : u64 = 0x0101010101010101;
-pub const FILE_H : u64 = 0x8080808080808080;
+pub const FILE_A : u64 = 0x01_01_01_01_01_01_01_01;
+pub const FILE_H : u64 = 0x80_80_80_80_80_80_80_80;
 
-pub const LIGHT_SQUARES : u64 = 0x55aa55aa55aa55aa;
-pub const  DARK_SQUARES : u64 = 0xaa55aa55aa55aa55;
+pub const RANK_1 : u64 = 0x00_00_00_00_00_00_00_FF;
+pub const RANK_8 : u64 = 0xFF_00_00_00_00_00_00_00;
+
+pub const LIGHT_SQUARES : u64 = 0x55_aa_55_aa_55_aa_55_aa;
+pub const  DARK_SQUARES : u64 = 0xaa_55_aa_55_aa_55_aa_55;
 
 #[inline] pub fn shift_nw(board : u64) -> u64 { return (board & !FILE_A) << 7; }
 #[inline] pub fn shift_ne(board : u64) -> u64 { return (board & !FILE_H) << 9; }
@@ -77,7 +80,7 @@ pub fn piece_destinations(piece : usize, src : usize, composite : u64) -> u64
     ROOK   =>   rook_destinations(composite, src),
     BISHOP => bishop_destinations(composite, src),
     KNIGHT => knight_destinations(           src),
-    _      => 0
+    _      => unreachable!()
   };
 }
 
@@ -150,11 +153,7 @@ impl State {
 
     if opp_boards[KNIGHT] & knight_destinations(king_square) != 0 { return true; }
 
-    let pawn_attacks = match color {
-      Color::White => shift_nw(king_board) | shift_ne(king_board),
-      Color::Black => shift_sw(king_board) | shift_se(king_board),
-    };
-    if pawn_attacks & opp_boards[PAWN] != 0 { return true; }
+    if pawn_attacks(color, king_board) & opp_boards[PAWN] != 0 { return true; }
 
     if king_destinations(king_square) & opp_boards[KING] != 0 { return true; }
 

@@ -33,12 +33,12 @@ macro_rules! ttyeprintln {
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-pub const cache_size_default      : usize = 67108864;  // 64 MiB ~ 4 million entries
-pub const search_threads_default  : usize = 1;
-pub const search_overhead_default : usize = 10;
+pub const CACHE_SIZE_DEFAULT      : usize = 67108864;  // 64 MiB ~ 4 million entries
+pub const SEARCH_THREADS_DEFAULT  : usize = 1;
+pub const SEARCH_OVERHEAD_DEFAULT : usize = 10;
 
-#[cfg(    debug_assertions) ] pub const use_prev_gen_default : bool = false;
-#[cfg(not(debug_assertions))] pub const use_prev_gen_default : bool = true;
+#[cfg(    debug_assertions) ] pub const USE_PREV_GEN_DEFAULT : bool = false;
+#[cfg(not(debug_assertions))] pub const USE_PREV_GEN_DEFAULT : bool = true;
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
@@ -46,7 +46,7 @@ pub fn uci() -> std::io::Result<()>
 {
   unsafe {
     SEARCH_NETWORK = DEFAULT_NETWORK;
-    USE_PREV_GEN = use_prev_gen_default;
+    USE_PREV_GEN = USE_PREV_GEN_DEFAULT;
   }
 
   let mut root     = State::new();
@@ -56,8 +56,8 @@ pub fn uci() -> std::io::Result<()>
 
   root.initialize_nnue();
 
-  let mut search_overhead = search_overhead_default;
-  let mut search_threads  = search_threads_default;
+  let mut search_overhead = SEARCH_OVERHEAD_DEFAULT;
+  let mut search_threads  = SEARCH_THREADS_DEFAULT;
 
   let stdin = std::io::stdin();
   let mut buf = String::new();
@@ -73,10 +73,10 @@ pub fn uci() -> std::io::Result<()>
       "uci" => {
         println!("id name Expositor {}", VERSION);
         println!("id author Kade");
-        println!("option name Hash type spin default {} min 1 max 65536", cache_size_default >> 20);
-        println!("option name Threads type spin default {} min 1 max 240", search_threads_default);
-        println!("option name Overhead type spin default {} min 0 max 1000", search_overhead_default);
-        println!("option name Persist type check default {}", use_prev_gen_default);
+        println!("option name Hash type spin default {} min 1 max 262144", CACHE_SIZE_DEFAULT >> 20);
+        println!("option name Threads type spin default {} min 1 max 252", SEARCH_THREADS_DEFAULT);
+        println!("option name Overhead type spin default {} min 0 max 1000", SEARCH_OVERHEAD_DEFAULT);
+        println!("option name Persist type check default {}", USE_PREV_GEN_DEFAULT);
         println!("uciok");
       }
 
@@ -101,7 +101,7 @@ pub fn uci() -> std::io::Result<()>
         match opt.as_str() {
           "Hash" => {
             if let Ok(mb) = val.parse::<usize>() {
-              if mb > 65536 || 1 > mb {
+              if mb > 262144 || 1 > mb {
                 ttyeprintln!("error: invalid value");
                 continue;
               }
@@ -112,7 +112,7 @@ pub fn uci() -> std::io::Result<()>
 
           "Threads" => {
             if let Ok(th) = val.parse::<usize>() {
-              if th > 240 || 1 > th {
+              if th > 252 || 1 > th {
                 ttyeprintln!("error: invalid value");
                 continue;
               }
@@ -221,8 +221,8 @@ pub fn uci() -> std::io::Result<()>
       // Search  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
       "go" => {
-        if root.rights == 0 && (root.sides[W] | root.sides[B]).count_ones() == 3 {
-          let (score, pv) = probe_3man_line(&mut root);
+        if root.rights == 0 && (root.sides[W] | root.sides[B]).count_ones() < 4 {
+          let (score, pv) = probe_tb_line(&mut root);
           let best = if pv.is_empty() { NULL_MOVE } else { pv[0].clone() };
           if isatty(STDERR) {
             let rectified = if root.turn == Color::Black { -score } else { score };
@@ -319,7 +319,7 @@ pub fn uci() -> std::io::Result<()>
           match toggle.to_lowercase().as_str() {
             "true" | "t" | "yes" | "y" => unsafe { STDERR_ISATTY = Some(true);  }
             "false" | "f" | "no" | "n" => unsafe { STDERR_ISATTY = Some(false); }
-            _ => {}
+            _ => { ttyeprintln!("error: invalid value"); }
           }
         }
       }
@@ -329,7 +329,7 @@ pub fn uci() -> std::io::Result<()>
           match toggle.to_lowercase().as_str() {
             "true" | "t" | "yes" | "y" => unsafe { STDOUT_ISATTY = Some(true);  }
             "false" | "f" | "no" | "n" => unsafe { STDOUT_ISATTY = Some(false); }
-            _ => {}
+            _ => { ttyeprintln!("error: invalid value"); }
           }
         }
       }
@@ -392,7 +392,7 @@ pub fn uci() -> std::io::Result<()>
             let prediction = resolving_search(
               &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context, &mut statistics
             ) as f32 / 100.0;
-            let error = compress(prediction) - compress(score);
+            let error = harsh_compress(prediction) - harsh_compress(score);
             total_error += error * error;
             num_positions += 1;
           }
@@ -464,7 +464,7 @@ pub fn uci() -> std::io::Result<()>
             let resolved_score = resolving_search(
               &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context, &mut statistics
             ) as f32 / 100.0;
-            let tactical_diff = compress(static_score) - compress(resolved_score);
+            let tactical_diff = harsh_compress(static_score) - harsh_compress(resolved_score);
             if tactical_diff.abs() <= 0.1 {
               println!("{:+.2} {}", actual_score as f32 / 100.0, state.to_fen());
             }

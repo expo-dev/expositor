@@ -1,5 +1,7 @@
 use crate::misc::*;
 
+use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 // This struct is layed out like so:
@@ -11,7 +13,7 @@ use crate::misc::*;
 //   depth        1   15
 //   kind         1   16
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(C)]
 pub struct TableEntry {
   pub key        : u64,
@@ -54,6 +56,15 @@ pub fn initialize_cache(size : usize)
     CACHE = Vec::with_capacity(size);
     for _ in 0..size { CACHE.push(NULL_ENTRY); }
     INDEX_MASK = size - 1;
+  }
+}
+
+#[inline]
+pub fn table_prefetch(key : u64)
+{
+  unsafe {
+    let index = key as usize & INDEX_MASK;
+    _mm_prefetch(&CACHE[index] as *const TableEntry as *const i8, _MM_HINT_T0);
   }
 }
 

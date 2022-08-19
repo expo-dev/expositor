@@ -61,7 +61,7 @@ impl State {
             QUEEN  =>  any_span(opp_king_sq, atk_src),
             ROOK   => crux_span(opp_king_sq, atk_src),
             BISHOP => salt_span(opp_king_sq, atk_src),
-            _ => 0
+            _ => unreachable!()
           };
           let intermediate = span & composite;
           if intermediate.count_ones() == 1 {
@@ -145,7 +145,7 @@ impl State {
             QUEEN  =>  any_span(king_src, atk_src),
             ROOK   => crux_span(king_src, atk_src),
             BISHOP => salt_span(king_src, atk_src),
-            _ => 0
+            _ => unreachable!()
           };
           let blockers = span & composite;
           if blockers.count_ones() != 1 {

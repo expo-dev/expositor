@@ -144,7 +144,7 @@ impl State {
            key_diff ^= PIECE_BASIS[(BLACK+ROOK)*64 + 61]
                      ^ PIECE_BASIS[(BLACK+ROOK)*64 + 63];
         }
-        _ => {}
+        _ => unreachable!()
       }
     }
     else if m.is_enpass() {
@@ -218,13 +218,7 @@ impl State {
     self.incheck = m.gives_check();
     self.turn = !self.turn;
     self.ply += 1;
-    if self.dfz < 100 {
-      // Instead of writing a special case in main and resolving searches, which
-      //   is tricky to do properly (from experience), we simply keep dfz at 100
-      //   when a draw can be claimed before this position is reached (and leave
-      //   the draw to be scored by evaluate_in_game).
-      self.dfz  = if m.is_zeroing() { 0 } else { self.dfz + 1 };
-    }
+    self.dfz = if m.is_zeroing() { 0 } else { self.dfz + 1 };
 
     // Step 6. Perform key update
     let re_diff = rezobrist(prev_rights, prev_enpass, self.rights, self.enpass);
@@ -268,7 +262,7 @@ impl State {
            self.squares[61] = Piece::NullPiece;
            self.squares[63] = Piece::BlackRook;
         }
-        _ => {}
+        _ => unreachable!()
       }
     }
     else if m.is_enpass() {

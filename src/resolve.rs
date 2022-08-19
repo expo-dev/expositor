@@ -20,16 +20,22 @@ pub fn resolving_search(
   statistics : &mut Statistics,
 ) -> i16
 {
+  if state.dfz > 100 { return 0; }
+
   statistics.r_nodes_at_length[length as usize] += 1;
   statistics.r_nodes_at_height[height as usize] += 1;
 
+  let worst_possible = PROVEN_LOSS + (height as i16);
+  let  best_possible = PROVEN_MATE - (height as i16 + 1);
+
   // You can't stand pat if you're in check
-  let static_eval = if state.incheck { i16::MIN + 1 } else { state.evaluate_in_game() };
+  let static_eval = if state.incheck { worst_possible } else { state.evaluate_in_game() };
   let mut estimate = static_eval;
 
-  if estimate >= beta { return estimate; }
-
   let mut alpha = std::cmp::max(estimate, alpha);
+  let beta = std::cmp::min(best_possible, beta);
+
+  if alpha >= beta { return alpha; }
 
   // Don't consider moves which only give check (which are neither
   //   captures nor promotions) if last turn you didn't capture or
@@ -107,10 +113,10 @@ pub fn resolving_search(
   }
 
   // When there are no active/gainful successors and we're in check, this is actually mate!
-  //   since every move counts as active/gainful when you are in check
-  if successors == 0 && state.incheck { return PROVEN_LOSS + height as i16; }
-
-  return estimate;
+  //   since every move counts as active/gainful when you are in check.
+  if successors == 0 && state.incheck { return PROVEN_LOSS + (height as i16); }
+  else if state.dfz == 100 { return 0; }
+  else { return estimate; }
 }
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~

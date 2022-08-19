@@ -101,8 +101,8 @@ impl SearchParams {
         moves_remaining = (ply_remaining * 0.5).max(if no_increment { 24.0 } else { 8.0 });
       }
 
-      const one_third : f64 = 0.333_333_333_333_333_333;
-      const two_third : f64 = 0.666_666_666_666_666_667;
+      const ONE_THIRD : f64 = 0.333_333_333_333_333_333;
+      const TWO_THIRD : f64 = 0.666_666_666_666_666_667;
 
       let base;
       if no_increment {
@@ -111,8 +111,8 @@ impl SearchParams {
       else {
         base = (seconds_remaining - increment) / moves_remaining + increment;
       }
-      let target = (   base   ).min(seconds_remaining * one_third);
-      let cutoff = (base * 3.0).min(seconds_remaining * two_third);
+      let target = (   base   ).min(seconds_remaining * ONE_THIRD);
+      let cutoff = (base * 3.0).min(seconds_remaining * TWO_THIRD);
       limits.target = Some((target - overhead).max(0.0));
       limits.cutoff = Some((cutoff - overhead).max(0.0));
       return limits;
