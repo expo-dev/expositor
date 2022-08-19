@@ -128,7 +128,7 @@ These are processed by Expositor with her quiescing search and the leaves from t
 
 Most of the positions used for perft tests are from the [Zahak](https://github.com/amanjpro/zahak) repository.
 
-Particular thanks to [Jeremy Wright](https://github.com/jtheardw/mantissa) for help with main search. Many techniques were implemented from his descriptions.
+Particular thanks to [Jeremy Wright](https://github.com/jtheardw/mantissa) for help with main search. Many techniques were implemented from his verbal descriptions during our conversations.
 
 ## Terms of Use
 
