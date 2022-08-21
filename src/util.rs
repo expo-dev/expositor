@@ -20,7 +20,7 @@ pub fn isatty(fd : u64) -> bool
     let ret : i64;
     let ioctl : u64 = 16;
     let tcgets : u64 = 0x5401;
-    let mut empty : [u64; 3] = [0; 3];
+    let mut empty : [u64; 8] = [0; 8];
     std::arch::asm!(
       "syscall"
       , inout("rax") ioctl => ret
