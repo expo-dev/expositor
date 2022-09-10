@@ -5,7 +5,7 @@ use crate::state::*;
 use crate::simd::*;
 
 use std::fs::File;
-use std::io::{Read, Write, BufWriter, Error, ErrorKind};
+use std::io::{Read, Write, BufWriter, Error};
 use std::mem::MaybeUninit;
 use std::simd::Simd;
 
@@ -161,13 +161,13 @@ impl Network {
     let mut check = [0; 8];
     fh.read_exact(&mut sgntr)?;
     if sgntr != "EXPO".as_bytes() {
-      return Err(Error::new(ErrorKind::Other, "missing signature"));
+      return Err(Error::other("missing signature"));
     }
     fh.read_exact(&mut array)?;
     let network = unsafe { std::mem::transmute::<_,Self>(array) };
     fh.read_exact(&mut check)?;
     if network.checksum() != u64::from_le_bytes(check) {
-      return Err(Error::new(ErrorKind::Other, "checksum mismatch"));
+      return Err(Error::other("checksum mismatch"));
     }
     return Ok(network);
   }

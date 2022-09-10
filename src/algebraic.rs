@@ -39,19 +39,19 @@ impl Algebraic for Move {
   }
 }
 
-pub fn parse_long(state : &State, long : &str) -> Result<Move, String>
+pub fn parse_long(state : &State, long : &str) -> Result<Move, &'static str>
 {
-  #[cfg(debug_assertions)] if !long.is_ascii() { return Err(String::from("not ASCII")); }
+  #[cfg(debug_assertions)] if !long.is_ascii() { return Err("not ASCII"); }
 
   let bytes = long.as_bytes();
-  if bytes.len() < 4 || bytes.len() > 5 { return Err(String::from("incorrect length")); }
+  if bytes.len() < 4 || bytes.len() > 5 { return Err("incorrect length"); }
 
   let src_file = bytes[0].wrapping_sub('a' as u8);
   let src_rank = bytes[1].wrapping_sub('1' as u8);
   let dst_file = bytes[2].wrapping_sub('a' as u8);
   let dst_rank = bytes[3].wrapping_sub('1' as u8);
   if src_file >= 8 || src_rank >= 8 || dst_file >= 8 || dst_rank >= 8 {
-    return Err(String::from("invalid square"));
+    return Err("invalid square");
   }
   let src_square = (src_rank*8 + src_file) as i8;
   let dst_square = (dst_rank*8 + dst_file) as i8;
@@ -65,7 +65,7 @@ pub fn parse_long(state : &State, long : &str) -> Result<Move, String>
       'r' => Some(Piece::new(state.turn, ROOK   as u8)),
       'b' => Some(Piece::new(state.turn, BISHOP as u8)),
       'n' => Some(Piece::new(state.turn, KNIGHT as u8)),
-       _  => return Err(String::from("invalid promotion"))
+       _  => return Err("invalid promotion")
     };
   }
 
@@ -85,12 +85,12 @@ pub fn parse_long(state : &State, long : &str) -> Result<Move, String>
     }
     return Ok(mv);
   }
-  return Err(String::from("no matches"));
+  return Err("no matches");
 }
 
-pub fn parse_short(state : &State, short : &str) -> Result<Move, String>
+pub fn parse_short(state : &State, short : &str) -> Result<Move, &'static str>
 {
-  #[cfg(debug_assertions)] if !short.is_ascii() { return Err(String::from("not ASCII")); }
+  #[cfg(debug_assertions)] if !short.is_ascii() { return Err("not ASCII"); }
 
   let mut src_piece = Piece::new(state.turn, PAWN as u8);
   let mut src_file  : Option<u8>    = None  ;
@@ -107,7 +107,7 @@ pub fn parse_short(state : &State, short : &str) -> Result<Move, String>
   // src_piece  src_rank  dst_file   promotion
 
   let mut bytes = short.trim_end_matches(|x| x == '+' || x == '#').as_bytes();
-  if bytes.len() < 2 { return Err(String::from("incorrect length")); }
+  if bytes.len() < 2 { return Err("incorrect length"); }
 
   if bytes == "O-O-O".as_bytes() || bytes == "0-0-0".as_bytes() {
     bytes = match state.turn {
@@ -134,12 +134,12 @@ pub fn parse_short(state : &State, short : &str) -> Result<Move, String>
        _  => None
     };
     idx = idx - 2;
-    if idx < 1 { return Err(String::from("only specifies promotion")); }
+    if idx < 1 { return Err("only specifies promotion"); }
   }
 
   dst_file = bytes[idx as usize - 1].wrapping_sub('a' as u8);
   dst_rank = bytes[  idx as usize  ].wrapping_sub('1' as u8);
-  if dst_file >= 8 || dst_rank >= 8 { return Err(String::from("invalid square")); }
+  if dst_file >= 8 || dst_rank >= 8 { return Err("invalid square"); }
   let dst_square = (dst_rank*8 + dst_file) as i8;
   idx = idx - 2;
 
@@ -169,7 +169,7 @@ pub fn parse_short(state : &State, short : &str) -> Result<Move, String>
       idx = idx - 1;
     }
   }
-  if idx != -1 { return Err(String::from("extraneous character")); }
+  if idx != -1 { return Err("extraneous character"); }
 
   let mut early_moves = Vec::with_capacity(16);
   let mut late_moves  = Vec::with_capacity(32);
@@ -191,54 +191,34 @@ pub fn parse_short(state : &State, short : &str) -> Result<Move, String>
     if src_rank.is_some() { if mv.src / 8 != (src_rank.unwrap() as i8) { continue; } }
 
     if matched.is_null() { matched = mv.clone(); }
-    else { return Err(format!("multiple matches {} {}", matched.algebraic(), mv.algebraic())); }
+    else { return Err("multiple matches"); }
   }
-  if matched.is_null() { return Err(String::from("no matches")); }
+  if matched.is_null() { return Err("no matches"); }
   return Ok(matched);
 }
 
-pub fn parse_universal(state : &State, either : &str) -> Result<Move, String>
+pub fn parse_universal(state : &State, either : &str) -> Result<Move, &'static str>
 {
-  match parse_long(state, either) {
-    Ok(mv)     => { return Ok(mv); }
-    Err(msg_l) => match parse_short(state, either) {
-      Ok(mv)     => { return Ok(mv); }
-      Err(msg_s) => { return
-        Err(format!("unable to parse as long ({}) or short ({})", msg_l, msg_s));
-      }
-    }
-  }
+  if let Ok(mv) =  parse_long(state, either) { return Ok(mv); }
+  if let Ok(mv) = parse_short(state, either) { return Ok(mv); }
+  return Err("unable to parse move as long or short");
 }
 
-pub fn parse_pgn(state : &State, text : &str, verify : bool) -> Result<Vec<Move>, String>
+pub fn parse_pgn(state : &State, text : &str) -> Result<Vec<Move>, &'static str>
 {
-  #[cfg(debug_assertions)] if !text.is_ascii() { return Err(String::from("not ASCII")); }
-  return parse_pgn_tokens(state, &mut text.split_ascii_whitespace(), verify);
+  #[cfg(debug_assertions)] if !text.is_ascii() { return Err("not ASCII"); }
+  return parse_pgn_tokens(state, &mut text.split_ascii_whitespace());
 }
 
 pub fn parse_pgn_tokens(
   state  : &State,
   text   : &mut SplitAsciiWhitespace,
-  verify : bool
-) -> Result<Vec<Move>, String>
+) -> Result<Vec<Move>, &'static str>
 {
   let mut working = state.clone();
   let mut movelist : Vec<Move> = Vec::new();
-
   for token in text {
-    if token.ends_with('.') {
-      if verify {
-        match token.trim_end_matches('.').parse::<u16>() {
-          Ok(x) => if x == 0 || working.ply != (x-1)*2 {
-            return Err(String::from("move number mismatch"));
-          }
-          Err(_) => {
-            return Err(String::from("invalid move number"));
-          }
-        }
-      }
-      continue;
-    }
+    if token.ends_with('.') { continue; }
     if token=="1-0" || token=="0-1" || token=="1/2-1/2" || token=="*" { break; }
     let mv = parse_short(&working, token)?;
     working.apply(&mv);

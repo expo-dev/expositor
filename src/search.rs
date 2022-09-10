@@ -618,7 +618,9 @@ fn best_move(
   let mut ratios = [1.5, 1.5, 1.5, 1.5];
   let mut last_best = NULL_MOVE;
   let mut stability = 0;
-  let mut activity = 0;
+  let mut wgt_stbly = 0;
+/*let mut activity = 0;*/
+  let mut wgt_actv = 0;
 
   let mut last_step = 0;
   let mut last_pv;
@@ -668,10 +670,13 @@ fn best_move(
 
     if quick_eq(&best, &last_best) {
       stability += 1;
+      wgt_stbly += step;
     }
     else {
       stability = 1;
-      activity += 1;
+      wgt_stbly = step;
+    /*activity += 1;*/
+      wgt_actv += step;
     };
     last_best = best.clone();
 
@@ -756,16 +761,19 @@ fn best_move(
         // Estimate the next time to depth
         let estimate = time_to_depth * geom_mean;
 
-        if let Some(hard_limit) = limits.cutoff { if estimate > hard_limit { break; } }
+        if let Some(hard_limit) = limits.cutoff {
+          if estimate > hard_limit && stability > 1 { break; }
+        }
 
         let downfactor =
-          if      stability < 5  { 1.0                                 }
-          else if stability < 20 { 1.0 - 0.05 * (stability - 4) as f64 }
-          else                   { 0.2                                 };
+          if stability == 1       { 1.5 }
+          else if wgt_stbly <  30 { 1.0 }
+          else if wgt_stbly < 230 { 1.0 - 0.004 * (wgt_stbly - 30) as f64 }
+          else                    { 0.2 };
         let upfactor =
-          if      activity < 3  { 1.0                               }
-          else if activity < 12 { 1.0 + 0.1 * (activity - 2) as f64 }
-          else                  { 2.0                               };
+          if      wgt_actv < 10 { 1.0 }
+          else if wgt_actv < 60 { 1.0 + 0.02 * (wgt_actv - 10) as f64 }
+          else                  { 2.0 };
         let target = target * upfactor * downfactor;
 
         if estimate - target > target - time_to_depth { break; }

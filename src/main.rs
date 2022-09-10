@@ -2,6 +2,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(unused_macros)]
 
+#![feature(io_error_other)]
 #![feature(iter_intersperse)]
 #![feature(maybe_uninit_uninit_array)]
 #![feature(portable_simd)]
@@ -54,6 +55,7 @@ mod zobrist   ;
 // TODO for clearing the last bit, consider a function.
 //   (No need for an intrinsic; LLVM recognizes the pattern.)
 // TODO go through uses of unwrap and see if let Some or ? can be used
+// TODO decide when panic should or should not be used
 // TODO consistent comment styling
 
 fn main() -> std::io::Result<()>

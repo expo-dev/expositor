@@ -11,22 +11,12 @@ fn load_dataset(path : &str) -> std::io::Result<Vec<[f32; 3]>>
   let mut dataset = Vec::new();
   for game in PGNReader::open(path)? {
     let game = game?;
-    let expo_lost = (game.result == GameResult::White && game.expo_black)
-                 || (game.result == GameResult::Black && game.expo_white);
-    if expo_lost && game.termination == GameTermination::Flag {
-      skip_count += 1;
-      continue;
-    }
-    let r = 2100;
-    if (game.expo_black && game.white_elo < r) || (game.expo_white && game.black_elo < r) {
+    if game.termination == GameTermination::Flag {
       skip_count += 1;
       continue;
     }
     let movelist = &game.movelist;
     let game_length = movelist.len() as u16;
-    if !crate::util::isatty(crate::util::STDOUT) {
-      print!(" {},", game_length); if game_count % 16 == 15 { print!("\n"); }
-    }
     let mut working = State::new();
     working.initialize_nnue();
     for mv in movelist {

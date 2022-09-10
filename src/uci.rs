@@ -143,7 +143,7 @@ pub fn uci() -> std::io::Result<()>
       "ucinewgame" => {
         previous = NULL_MOVE;
         current  = NULL_MOVE;
-        history = Vec::new();
+        history.clear();
       }
 
       "isready" => {
@@ -160,7 +160,7 @@ pub fn uci() -> std::io::Result<()>
               root.initialize_nnue();
               previous = NULL_MOVE;
               current  = NULL_MOVE;
-              history = Vec::new();
+              history.clear();
             }
             "fen" => {
               match State::from_fen_fields(&mut inp) {
@@ -169,23 +169,7 @@ pub fn uci() -> std::io::Result<()>
                   root.initialize_nnue();
                   previous = NULL_MOVE;
                   current  = NULL_MOVE;
-                  history = Vec::new();
-                }
-                Err(msg) => {
-                  ttyeprintln!("error: {}", msg);
-                  break;
-                }
-              }
-            }
-            "pgn" => {
-              match parse_pgn_tokens(&root, &mut inp, false) {
-                Ok(movelist) => {
-                  for mv in movelist {
-                    root.apply(&mv);
-                    history.push((root.key, mv.is_capture()));
-                    previous = current;
-                    current = mv;
-                  }
+                  history.clear();
                 }
                 Err(msg) => {
                   ttyeprintln!("error: {}", msg);
@@ -342,6 +326,10 @@ pub fn uci() -> std::io::Result<()>
         if isatty(STDERR) { show(&root, Color::White, &hi(&previous, &current)); }
       }
 
+      "key" => {
+        if isatty(STDERR) { eprintln!("{:016x}", root.key); root.verify_zobrist(); }
+      }
+
       "perft" => {
         if isatty(STDERR) { run_perft(); }
       }
@@ -362,7 +350,7 @@ pub fn uci() -> std::io::Result<()>
         let mut context = Context::new();
         if let Some(path) = inp.next() {
           for state in FENReader::open(path)? {
-            let mut state = state?;
+            let mut state = state?.0;
             state.initialize_nnue();
             resolving_search_leaves(
               &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context
@@ -380,13 +368,14 @@ pub fn uci() -> std::io::Result<()>
         let mut num_positions = 0;
 
         if let Some(path) = inp.next() {
-          let dataset = ScoredFENReader::open(
+          let dataset = FENReader::open_scored(
             path,
             ScoreUnit::FractionalPawn,
             ScoreSign::FlipWhenBlackToMove
           )?;
-          for pair in dataset {
-            let (score, mut state) = pair.unwrap();
+          for triple in dataset {
+            let (mut state, score, _) = triple?;
+            if score == i16::MIN { continue; }
             let score = score as f32 / 100.0;
             state.initialize_nnue();
             let prediction = resolving_search(
@@ -452,13 +441,13 @@ pub fn uci() -> std::io::Result<()>
         let mut statistics = Statistics::new();
 
         if let Some(path) = inp.next() {
-          let dataset = ScoredFENReader::open(
+          let dataset = FENReader::open_scored(
             path,
             ScoreUnit::FractionalPawn,
             ScoreSign::LeaveUnchanged,
           )?;
-          for position in dataset {
-            let (actual_score, mut state) = position?;
+          for triple in dataset {
+            let (mut state, actual_score, _) = triple?;
             state.initialize_nnue();
             let static_score = state.evaluate_in_game() as f32 / 100.0;
             let resolved_score = resolving_search(
@@ -475,6 +464,12 @@ pub fn uci() -> std::io::Result<()>
       "nonsense" => {
         run_nonsense_openings();
       }
+
+      // ↓↓↓ TEMPORARY ↓↓↓
+      "canonicalize" => {
+        if let Some(path) = inp.next() { canonicalize(path)?; }
+      }
+      // ↑↑↑ TEMPORARY ↑↑↑
 
       // NNUE  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
@@ -565,31 +560,33 @@ pub fn uci() -> std::io::Result<()>
       }
 
       _ => {
-        match State::from_fen(&buf) {
-          Ok(new) => {
-            root = new;
-            root.initialize_nnue();
-            previous = NULL_MOVE;
-            current  = NULL_MOVE;
-            history = Vec::new();
-          }
-          Err(_) => match parse_pgn(&State::new(), &buf, true) {
-            Ok(movelist) => {
-              if movelist.is_empty() { continue; }
-              root = State::new();
-              root.initialize_nnue();
-              previous = NULL_MOVE;
-              current  = NULL_MOVE;
-              history = Vec::new();
-              for mv in movelist {
-                root.apply(&mv);
-                history.push((root.key, mv.is_capture()));
-                previous = current;
-                current = mv;
-              }
+        if let Ok(new) = State::from_fen(&buf) {
+          root = new;
+          root.initialize_nnue();
+          previous = NULL_MOVE;
+          current  = NULL_MOVE;
+          history.clear();
+          continue;
+        }
+        let text = buf.replace('.', ". ");
+        if text.starts_with("1.") {
+          root = State::new();
+          root.initialize_nnue();
+          previous = NULL_MOVE;
+          current  = NULL_MOVE;
+          history.clear();
+        }
+        match parse_pgn(&root, &text) {
+          Ok(movelist) => {
+            if movelist.is_empty() { continue; }
+            for mv in movelist {
+              root.apply(&mv);
+              history.push((root.key, mv.is_capture()));
+              previous = current;
+              current = mv;
             }
-            Err(_) => { ttyeprintln!("error: unknown command"); }
           }
+          Err(_) => { ttyeprintln!("error: unknown command"); }
         }
       }
 

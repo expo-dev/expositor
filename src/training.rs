@@ -385,8 +385,8 @@ pub fn train_nnue(
     // Read in an epoch's worth of positions
     eprint!("  Loading...\x1B[K\r");
     unsafe { TRAINING_SET.clear(); }
+    let mut buffer = String::new();
     for _ in 0..epoch_size {
-      let mut buffer = String::new();
       if reader.read_line(&mut buffer)? == 0 {
         // If we reach EOF, start from the beginning
         reader.rewind()?;

@@ -6,13 +6,17 @@ use crate::state::*;
 use std::str::SplitAsciiWhitespace;
 
 impl State {
-  pub fn from_fen(record : &str) -> Result<State, String>
+  pub fn from_fen(record : &str) -> Result<State, &'static str>
   {
-    #[cfg(debug_assertions)] if !record.is_ascii() { return Err(String::from("not ASCII")); }
-    return Self::from_fen_fields(&mut record.split_ascii_whitespace());
+    #[cfg(debug_assertions)] if !record.is_ascii() { return Err("not ASCII"); }
+    let mut fields = record.split_ascii_whitespace();
+    let result = Self::from_fen_fields(&mut fields);
+    if !fields.next().is_none() { return Err("trailing fields"); }
+    return result;
   }
 
-  pub fn from_fen_fields(record : &mut SplitAsciiWhitespace) -> Result<State, String>
+  // NOTE that this doesn't check whether there is extraneous output at the end.
+  pub fn from_fen_fields(record : &mut SplitAsciiWhitespace) -> Result<State, &'static str>
   {
     let mut state = State {
       sides:   [0; 2],
@@ -29,19 +33,19 @@ impl State {
     };
     let layout = match record.next() {
       Some(field) => field,
-      None => return Err(String::from("missing board layout"))
+      None => return Err("missing board layout")
     };
     let mut rank : i8 = 7;
     let mut file : i8 = 0;
     for c in layout.as_bytes() {
       if *c as char == '/' {
         rank -= 1;
-        if rank < 0 { return Err(String::from("more than eight ranks")); }
-        if file != 8 { return Err(String::from("incomplete rank")); }
+        if rank < 0 { return Err("more than eight ranks"); }
+        if file != 8 { return Err("incomplete rank"); }
         file = 0;
         continue;
       }
-      if file > 7 { return Err(String::from("more than eight files")); }
+      if file > 7 { return Err("more than eight files"); }
       if ('8' as u8) >= *c && *c > ('0' as u8) {
         file += (c - ('0' as u8)) as i8;
         continue;
@@ -59,7 +63,7 @@ impl State {
         'b' => Piece::BlackBishop ,
         'n' => Piece::BlackKnight ,
         'p' => Piece::BlackPawn   ,
-         _  => return Err(String::from("extraneous character in board layout"))
+         _  => return Err("extraneous character in board layout")
       };
       let square = rank*8 + file;
       state.sides[piece.color() as usize] |= 1u64 << square;
@@ -67,21 +71,21 @@ impl State {
       state.squares[square as usize] = piece;
       file += 1;
     }
-    if rank != 0 { return Err(String::from("fewer than eight ranks")); }
+    if rank != 0 { return Err("fewer than eight ranks"); }
 
     let side_to_move = match record.next() {
       Some(field) => field,
-      None => return Err(String::from("missing side to move"))
+      None => return Err("missing side to move")
     };
     state.turn = match side_to_move {
       "w" => Color::White,
       "b" => Color::Black,
-       _  => return Err(String::from("side to move is not 'w' or 'b'"))
+       _  => return Err("side to move is not 'w' or 'b'")
     };
 
     let rights = match record.next() {
       Some(field) => field,
-      None => return Err(String::from("missing castling rights"))
+      None => return Err("missing castling rights")
     };
     if rights != "-" {
       for c in rights.as_bytes() {
@@ -90,7 +94,7 @@ impl State {
           'Q' => 2,
           'k' => 4,
           'q' => 8,
-           _  => return Err(String::from("spurious character in castling rights"))
+           _  => return Err("spurious character in castling rights")
         };
       }
     }
@@ -105,14 +109,14 @@ impl State {
 
     let enpass = match record.next() {
       Some(field) => field,
-      None => return Err(String::from("missing en passant target"))
+      None => return Err("missing en passant target")
     };
     if enpass != "-" {
-      if enpass.len() != 2 { return Err(String::from("invalid en passant target")); }
+      if enpass.len() != 2 { return Err("invalid en passant target"); }
       let enpass = enpass.as_bytes();
       if enpass[0] > ('h' as u8) || enpass[0] < ('a' as u8)
         || enpass[1] > ('8' as u8) || enpass[1] < ('1' as u8) {
-        return Err(String::from("invalid en passant target"));
+        return Err("invalid en passant target");
       }
       let file = enpass[0] - ('a' as u8);
       let rank = enpass[1] - ('1' as u8);
@@ -121,19 +125,19 @@ impl State {
 
     let depth_from_zeroing = match record.next() {
       Some(field) => field,
-      None => return Err(String::from("missing number of ply since zeroing"))
+      None => return Err("missing number of ply since zeroing")
     };
     state.dfz = match depth_from_zeroing.parse::<u16>() {
-      Ok(n) => n, Err(_) => return Err(String::from("invalid number of ply since zeroing"))
+      Ok(n) => n, Err(_) => return Err("invalid number of ply since zeroing")
     };
 
     let move_number = match record.next() {
       Some(field) => field,
-      None => return Err(String::from("missing move number"))
+      None => return Err("missing move number")
     };
     state.ply = match move_number.parse::<u16>() {
       Ok(n) => if n == 0 { 0 } else { (n-1)*2 + state.turn as u16 },
-      Err(_) => return Err(String::from("invalid move number"))
+      Err(_) => return Err("invalid move number")
     };
 
     state.incheck = state.in_check(state.turn);
