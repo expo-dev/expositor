@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 #![allow(non_upper_case_globals)]
-#![allow(unused_macros)]
 
 #![feature(io_error_other)]
 #![feature(iter_intersperse)]

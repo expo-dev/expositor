@@ -1,8 +1,8 @@
-<img src="pic/nameplate-2WN29.png" style="width: 16em;">
+<img src="pic/nameplate-2BR17.png" style="width: 16em;">
 
 Expositor is a UCI-conforming chess engine for AMD&thinsp;64 / Intel&thinsp;64 systems. You can [play against her on Lichess](https://lichess.org/@/expositor) or download a copy for local use.
 
-Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404/index.html) rating of about 3200 running singlythreaded. You can read about her background on the [TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
+Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404/index.html) rating of about 3200 to 3300 running singlythreaded. You can read about her background on the [TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
 
 ## Releases
 
@@ -95,16 +95,9 @@ If you find any bugs or have any questions, please file an issue on Github or se
 
 | Version | Release Date | CCRL Blitz | Notes                                                  |
 |:-------:|:------------:|:----------:|:-------------------------------------------------------|
-|  2WN29  |  29 May 2022 |    3194    | Various fixes, better time control, other improvements |
-|  2WQ23  |  23 Feb 2022 |    3118    | First public release                                   |
-
-## Pending Release
-
-You can try these improvements and features by checking out the `preview` branch.
-
-- **Search Tuning**&ensp;Many of the constants in Expositor's search have now been tuned with a variation of SPSA. Along with a few small fixes, this has increased the strength by approximately 120 Elo against 2WN29 in self-play. I expect to make a release with these changes in August or September.
-
-- **Internal Tablebases**&ensp;Expositor now has an internal 3-man tablebase and I'm working on an optional 4-man tablebase. This will not increase her strength, since her endgame heuristics are sufficient for 4-man endgames besides some KBN&thinsp;_v_&thinsp;K positions, but I wanted a break from work on the HCE bootstrapping and thought it would be fun.
+|  2BR17  |  17 Sep 2022 |   &mdash;  | fixes, tuned search, internal 3-man tablebase          |
+|  2WN29  |  29 May 2022 |    3194    | fixes, better time control, cache persistence          |
+|  2WQ23  |  23 Feb 2022 |    3118    | first public release                                   |
 
 ## In Progress
 
