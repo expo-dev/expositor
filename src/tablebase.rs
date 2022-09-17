@@ -205,7 +205,7 @@ fn build_3man_subtable(x : usize) {
     for aps in 0..64 {
       for dks in 0..64 {
         // We don't consider whether the side with the piece is being mated,
-        //   since the long king cannot mate, so we skip straight to considering
+        //   since the lone king cannot mate, so we skip straight to considering
         //   the side without the piece is being mated.
         if legal(subtable[akx][aps][dks][1]) {
           let aks = idx2sq(akx);

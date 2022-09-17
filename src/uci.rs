@@ -298,21 +298,17 @@ pub fn uci() -> std::io::Result<()>
 
       // Tools ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-      "stderr-isatty" => {
+      "isatty" | "stderr-isatty" | "stdout-isatty" => {
         if let Some(toggle) = inp.next() {
           match toggle.to_lowercase().as_str() {
-            "true" | "t" | "yes" | "y" => unsafe { STDERR_ISATTY = Some(true);  }
-            "false" | "f" | "no" | "n" => unsafe { STDERR_ISATTY = Some(false); }
-            _ => { ttyeprintln!("error: invalid value"); }
-          }
-        }
-      }
-
-      "stdout-isatty" => {
-        if let Some(toggle) = inp.next() {
-          match toggle.to_lowercase().as_str() {
-            "true" | "t" | "yes" | "y" => unsafe { STDOUT_ISATTY = Some(true);  }
-            "false" | "f" | "no" | "n" => unsafe { STDOUT_ISATTY = Some(false); }
+            "true" | "t" | "yes" | "y" => unsafe {
+              if cmd == "isatty" || cmd == "stderr-isatty" { STDERR_ISATTY = Some(true); }
+              if cmd == "isatty" || cmd == "stdout-isatty" { STDOUT_ISATTY = Some(true); }
+            }
+            "false" | "f" | "no" | "n" => unsafe {
+              if cmd == "isatty" || cmd == "stderr-isatty" { STDERR_ISATTY = Some(false); }
+              if cmd == "isatty" || cmd == "stdout-isatty" { STDOUT_ISATTY = Some(false); }
+            }
             _ => { ttyeprintln!("error: invalid value"); }
           }
         }
@@ -447,16 +443,23 @@ pub fn uci() -> std::io::Result<()>
             ScoreSign::LeaveUnchanged,
           )?;
           for triple in dataset {
-            let (mut state, actual_score, _) = triple?;
+            let (mut state, actual_score, outcome) = triple?;
+            if actual_score.abs() == PROVEN_MATE { continue; }
             state.initialize_nnue();
             let static_score = state.evaluate_in_game() as f32 / 100.0;
             let resolved_score = resolving_search(
               &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context, &mut statistics
             ) as f32 / 100.0;
             let tactical_diff = harsh_compress(static_score) - harsh_compress(resolved_score);
-            if tactical_diff.abs() <= 0.1 {
-              println!("{:+.2} {}", actual_score as f32 / 100.0, state.to_fen());
+            if tactical_diff.abs() > 0.1 { continue; }
+            print!("{} = {:+.2}", state.to_fen(), actual_score as f32 / 100.0);
+            match outcome {
+             -1 => { print!(" b"); }
+              0 => { print!(" d"); }
+              1 => { print!(" w"); }
+              _ => {}
             }
+            println!();
           }
         }
       }
@@ -468,6 +471,26 @@ pub fn uci() -> std::io::Result<()>
       // ↓↓↓ TEMPORARY ↓↓↓
       "canonicalize" => {
         if let Some(path) = inp.next() { canonicalize(path)?; }
+      }
+
+      "convert" => {
+        if let Some(path) = inp.next() {
+          let dataset = PGNReader::open(path)?;
+          for game in dataset {
+            let mut game = game?;
+            let result = match game.result {
+              GameResult::White => 'w',
+              GameResult::Black => 'b',
+              GameResult::Draw  => 'd',
+              GameResult::Incomplete => continue
+            };
+            println!("{} = {}", game.initial.to_fen(), result);
+            for mv in game.movelist {
+              game.initial.apply(&mv);
+              println!("{} = {}", game.initial.to_fen(), result);
+            }
+          }
+        }
       }
       // ↑↑↑ TEMPORARY ↑↑↑
 
