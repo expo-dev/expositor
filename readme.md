@@ -2,7 +2,7 @@
 
 Expositor is a UCI-conforming chess engine for AMD&thinsp;64 / Intel&thinsp;64 systems. You can [play against her on Lichess](https://lichess.org/@/expositor) or download a copy for local use.
 
-Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404/index.html) rating of about 3200 to 3300 running singlythreaded. You can read about her background on the [TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
+Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404) rating of 3286 running singlythreaded (#35) and a [CCRL 40/15](https://www.computerchess.org.uk/ccrl/4040) rating of 3312 running with four threads (#30). You can read about her background on the [TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
 
 ## Releases
 
