@@ -93,11 +93,13 @@ If you find any bugs or have any questions, please file an issue on Github or se
 
 ## Versions
 
-| Version | Release Date | CCRL Blitz | Notes                                                  |
-|:-------:|:------------:|:----------:|:-------------------------------------------------------|
-|  2BR17  |  17 Sep 2022 |   &mdash;  | fixes, tuned search, internal 3-man tablebase          |
-|  2WN29  |  29 May 2022 |    3194    | fixes, better time control, cache persistence          |
-|  2WQ23  |  23 Feb 2022 |    3118    | first public release                                   |
+| Version | Release Date | CCRL Blitz |    CCRL 40/15     | Notes                                                  |
+|:-------:|:------------:|:----------:|:-----------------:|:-------------------------------------------------------|
+|  2BR17  |  17 Sep 2022 |    3286    | 3205 &ndash; 3312 | fixes, tuned search, internal 3-man tablebase          |
+|  2WN29  |  29 May 2022 |    3192    | 3148 &ndash; 3243 | fixes, better time control, cache persistence          |
+|  2WQ23  |  23 Feb 2022 |    3117    | 3079 &ndash; unkn | first public release                                   |
+
+The two ratings listed under _CCRL 40/15_ in each row are for 1- and 4-thread performance.
 
 ## In Progress
 
