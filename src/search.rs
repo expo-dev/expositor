@@ -618,9 +618,8 @@ fn best_move(
   let mut ratios = [1.5, 1.5, 1.5, 1.5];
   let mut last_best = NULL_MOVE;
   let mut stability = 0;
-  let mut wgt_stbly = 0;
-/*let mut activity = 0;*/
-  let mut wgt_actv = 0;
+  let mut wgt_stbly : u16 = 0;
+  let mut wgt_actv  : u16 = 0;
 
   let mut last_step = 0;
   let mut last_pv;
@@ -670,13 +669,12 @@ fn best_move(
 
     if quick_eq(&best, &last_best) {
       stability += 1;
-      wgt_stbly += step;
+      wgt_stbly += step as u16;
     }
     else {
       stability = 1;
-      wgt_stbly = step;
-    /*activity += 1;*/
-      wgt_actv += step;
+      wgt_stbly = step as u16;
+      wgt_actv += step as u16;
     };
     last_best = best.clone();
 
