@@ -2,7 +2,7 @@
 
 Expositor is a UCI-conforming chess engine for AMD&thinsp;64 / Intel&thinsp;64 systems. You can [play against her on Lichess](https://lichess.org/@/expositor) or download a copy for local use.
 
-Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404) rating of 3289 running singlythreaded (#39) and a [CCRL 40/15](https://www.computerchess.org.uk/ccrl/4040) rating of 3313 running with four threads (#31). You can read about her background on the [TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
+Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404) rating of 3289 running singlythreaded (#40) and a [CCRL 40/15](https://www.computerchess.org.uk/ccrl/4040) rating of 3315 running with four threads (#33). You can read about her background on the [TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
 
 ## Releases
 
@@ -95,9 +95,9 @@ If you find any bugs or have any questions, please file an issue on Github or se
 
 | Version | Release Date | CCRL Blitz |    CCRL 40/15     | Notes                                         |
 |:-------:|:------------:|:----------:|:-----------------:|:----------------------------------------------|
-|  2BR17  |  17 Sep 2022 |    3289    | 3206 &ndash; 3313 | fixes, tuned search, internal 3-man tablebase |
+|  2BR17  |  17 Sep 2022 |    3289    | 3204 &ndash; 3315 | fixes, tuned search, internal 3-man tablebase |
 |  2WN29  |  29 May 2022 |    3193    | 3149 &ndash; 3243 | fixes, better time control, cache persistence |
-|  2WQ23  |  23 Feb 2022 |    3117    | 3079 &ndash; unkn | first public release                          |
+|  2WQ23  |  23 Feb 2022 |    3117    | 3078 &ndash; unkn | first public release                          |
 
 The two ratings listed under _CCRL 40/15_ in each row are for 1- and 4-thread performance.
 
