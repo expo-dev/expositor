@@ -37,6 +37,7 @@ mod show      ;
 mod simd      ;
 mod span      ;
 mod state     ;
+mod syzygy    ;
 mod tablebase ;
 mod test      ;
 mod training  ;

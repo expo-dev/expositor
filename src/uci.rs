@@ -15,6 +15,7 @@ use crate::regress::*;
 use crate::resolve::*;
 use crate::search::*;
 use crate::show::*;
+use crate::syzygy::*;
 use crate::tablebase::*;
 use crate::test::*;
 use crate::training::*;
@@ -77,6 +78,7 @@ pub fn uci() -> std::io::Result<()>
         println!("option name Threads type spin default {} min 1 max 252", SEARCH_THREADS_DEFAULT);
         println!("option name Overhead type spin default {} min 0 max 1000", SEARCH_OVERHEAD_DEFAULT);
         println!("option name Persist type check default {}", USE_PREV_GEN_DEFAULT);
+        println!("option name SyzygyPath type string default <empty>");
         println!("uciok");
       }
 
@@ -133,6 +135,12 @@ pub fn uci() -> std::io::Result<()>
               "true" | "t" | "yes" | "y" => unsafe { USE_PREV_GEN = true;  }
               "false" | "f" | "no" | "n" => unsafe { USE_PREV_GEN = false; }
               _ => { ttyeprintln!("error: invalid or missing value"); }
+            }
+          }
+
+          "SyzygyPath" => {
+            if initialize_syzygy(&val) {
+              ttyeprintln!("note: initialized {}-man syzygy tablebase", syzygy_support());
             }
           }
 
@@ -205,25 +213,36 @@ pub fn uci() -> std::io::Result<()>
       // Search  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
       "go" => {
-        if root.rights == 0 && (root.sides[W] | root.sides[B]).count_ones() < 4 {
-          let (score, pv) = probe_tb_line(&mut root);
-          let best = if pv.is_empty() { NULL_MOVE } else { pv[0].clone() };
-          if isatty(STDERR) {
-            let rectified = if root.turn == Color::Black { -score } else { score };
-            eprint!("TB \x1B[1m{:>4}\x1B[22m", format_score(rectified));
-            for mv in pv.iter() { eprint!(" {}", mv); }
-            eprint!("\n");
+        let men = (root.sides[W] | root.sides[B]).count_ones();
+        let syz = syzygy_active() && syzygy_support() >= men;
+        if root.rights == 0 && (men == 3 || syz) {
+          let mut score = i16::MIN;
+          let mut pv = Vec::new();
+          if men == 3 {
+            (score, pv) = probe_tb_line(&mut root);
           }
-          if !isatty(STDOUT) || !isatty(STDERR) {
-            print!("info depth 64 seldepth 64 nodes 1 time 0 score {}", format_uci_score(score));
-            if !pv.is_empty() {
-              print!(" multipv 1 pv");
-              for mv in pv { print!(" {}", mv.algebraic()); }
+          else if let Some(pair) = probe_syzygy_line(&mut root) {
+            (score, pv) = pair;
+          }
+          if score != i16::MIN {
+            let best = if pv.is_empty() { NULL_MOVE } else { pv[0].clone() };
+            if isatty(STDERR) {
+              let rectified = if root.turn == Color::Black { -score } else { score };
+              eprint!("TB \x1B[1m{:>4}\x1B[22m", format_score(rectified));
+              for mv in pv.iter() { eprint!(" {}", mv); }
+              eprint!("\n");
             }
-            print!("\n");
-            println!("bestmove {}", best.algebraic());
+            if !isatty(STDOUT) || !isatty(STDERR) {
+              print!("info depth 64 seldepth 64 nodes 1 time 0 score {}", format_uci_score(score));
+              if !pv.is_empty() {
+                print!(" multipv 1 pv");
+                for mv in pv { print!(" {}", mv.algebraic()); }
+              }
+              print!("\n");
+              println!("bestmove {}", best.algebraic());
+            }
+            continue;
           }
-          continue;
         }
 
         let mut params = SearchParams::new();
@@ -653,6 +672,11 @@ DESCRIPTION
       (This is achieved by tagging each table entry with a generation and
       does not incur the penalty of actually zeroing the table.) Setting
       this option to true generally increases playing strength.
+
+    setoption name SyzygyPath value <path>
+      Inform the engine that Syzygy tablebase files are located in the
+      directory <path> and enable the use of the Syzygy tablebases if the
+      files can be loaded.
 
   As well as some nonstandard commands:
 

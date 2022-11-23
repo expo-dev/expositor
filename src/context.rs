@@ -43,6 +43,8 @@ pub struct Statistics {
   pub zero_etc_zwrd_fwfd      : usize,
   pub zero_etc_fwfd           : usize,
   pub zero_fst_fwfd           : usize,
+
+  pub tb_hits                 : usize,
 }
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
@@ -204,6 +206,7 @@ impl Statistics {
       zero_etc_zwrd_fwfd:      0,
       zero_etc_fwfd:           0,
       zero_fst_fwfd:           0,
+      tb_hits:                 0,
     };
   }
 
@@ -229,6 +232,7 @@ impl Statistics {
     self.zero_etc_zwrd_fwfd      =  0;
     self.zero_etc_fwfd           =  0;
     self.zero_fst_fwfd           =  0;
+    self.tb_hits                 =  0;
   }
 
   pub fn add(&mut self, other : &Self)
@@ -253,6 +257,7 @@ impl Statistics {
     self.zero_etc_zwrd_fwfd      += other.zero_etc_zwrd_fwfd;
     self.zero_etc_fwfd           += other.zero_etc_fwfd;
     self.zero_fst_fwfd           += other.zero_fst_fwfd;
+    self.tb_hits                 += other.tb_hits;
   }
 
   pub fn print_stats(&self)

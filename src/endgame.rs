@@ -91,23 +91,23 @@ impl State
 //   K[QR][QRBN] v K
 //   KBB v K (opposite color bishops)
 //   K3+ v K
-fn generic_vs_k(def_king : u8, atk_king : u8) -> i16
+fn generic_v_k(def_king : u8, atk_king : u8) -> i16
 {
   let king_edge_dist = edge_dist(def_king);
   let king_king_dist = step_dist(def_king, atk_king);
-  // about +6_20 to +9_90
-  return 10_00 - king_edge_dist - (king_king_dist << 1);
+  // +7_11 to +9_99
+  return 10_17 - king_edge_dist - (king_king_dist << 1);
 }
 
 // K[QR] v K
-fn kh_vs_k(def_king : u8, atk_king : u8, atk_piece : u8) -> i16
+fn kh_v_k(def_king : u8, atk_king : u8, atk_piece : u8) -> i16
 {
   // we need the attacking king to help out
   let king_edge_dist  = edge_dist(def_king);
   let king_king_dist  = step_dist(def_king, atk_king);
   let king_piece_dist = manh_dist(def_king, atk_piece);
-  // about +5_90 to +9_90
-  return 10_00 - king_edge_dist - (king_king_dist << 1) - (king_piece_dist >> 1);
+  // +6_98 to +9_99
+  return 10_18 - king_edge_dist - (king_king_dist << 1) - (king_piece_dist >> 1);
 }
 
 // KBN v K
@@ -115,8 +115,8 @@ fn kbn_v_k(def_king : u8, atk_king : u8, light_bishop : bool) -> i16
 {
   let king_diag_dist = diag_dist(if light_bishop { def_king ^ 7 } else { def_king });
   let king_king_dist = step_dist(def_king, atk_king);
-  // about +3_70 to +9_90
-  return 10_00 - king_diag_dist - (king_king_dist << 1);
+  // +3_89 to +9_99
+  return 10_17 - king_diag_dist - (king_king_dist << 1);
 }
 
 // KP v K
@@ -149,14 +149,16 @@ fn kp_v_k(
   // NOTE this isn't quite right if the king is blocking its own pawn
   //   (it's still a win, but maybe needs to be scored differently)
   if turn == black_atk && !def_king_in_field {
-    return 5_00 - ((field_len as i16) << 6);
+    // +1_79 to 4_99
+    return 5_63 - ((field_len as i16) << 6);
   }
 
   let def_king_in_fence =
     (def_king/8 >= atk_pawn/8 - 1) && (diff(def_king%8, atk_pawn%8) <= field_len+1);
 
   if turn != black_atk && !def_king_in_fence {
-    return 5_00 - ((field_len as i16) << 6);
+    // +1_79 to 4_99
+    return 5_63 - ((field_len as i16) << 6);
   }
 
   let atk_king_dst = king_steps(atk_king, atk_pawn);
@@ -213,7 +215,7 @@ impl State {
         // KQ v K and KR v K
         if major != 0 {
           let atk_piece = self.location_of(if num_rooks == 1 { atk+ROOK } else { atk+QUEEN });
-          let score = kh_vs_k(def_king, atk_king, atk_piece);
+          let score = kh_v_k(def_king, atk_king, atk_piece);
           let score =
             if side_to_move_atk { INEVITABLE_MATE + score } else { INEVITABLE_LOSS - score };
           return Some(score);
@@ -224,7 +226,7 @@ impl State {
       if total == 2 {
         // K[QR][QRBN] v K
         if major != 0 {
-          let score = generic_vs_k(def_king, atk_king);
+          let score = generic_v_k(def_king, atk_king);
           let score =
             if side_to_move_atk { INEVITABLE_MATE + score } else { INEVITABLE_LOSS - score };
           return Some(score);
@@ -234,7 +236,7 @@ impl State {
         // KBB v K
         if num_bishops == 2 {
           if !(light_bishop && dark_bishop) { return Some(0); }
-          let score = generic_vs_k(def_king, atk_king);
+          let score = generic_v_k(def_king, atk_king);
           let score =
             if side_to_move_atk { LIKELY_MATE + score } else { LIKELY_LOSS - score };
           return Some(score);
@@ -252,7 +254,7 @@ impl State {
         }
       }
       // K3+ v K
-      let score = generic_vs_k(def_king, atk_king);
+      let score = generic_v_k(def_king, atk_king);
       let score =
         if side_to_move_atk { INEVITABLE_MATE + score } else { INEVITABLE_LOSS - score };
       return Some(score);

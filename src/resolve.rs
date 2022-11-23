@@ -73,7 +73,7 @@ pub fn resolving_search(
         // TODO rather than using the static exchange score, consider using the
         //   most optimistic score (capturing without retaliation) which results
         //   in safer, more conservative behavior.
-        if !mv.gives_check() && estimate.abs() < LIKELY_MATE {
+        if !mv.gives_check() && estimate.abs() < INEVITABLE_MATE {
           let gain = (mv.score as i32 * 10 * DELTA_SCALE) / 4096 + DELTA_MARGIN;
           if static_eval + (gain as i16) < alpha { continue; }
         }
@@ -164,7 +164,7 @@ pub fn debug_resolving_search(
 
     if !state.incheck && !mv.is_unusual() && !mv.gives_discovered_check() {
       if mv.is_capture() {
-        if !mv.gives_check() && estimate.abs() < LIKELY_MATE {
+        if !mv.gives_check() && estimate.abs() < INEVITABLE_MATE {
           let gain = (mv.score as i32 * 10 * DELTA_SCALE) / 4096 + DELTA_MARGIN;
           if static_eval + (gain as i16) < alpha {
             indent(height); eprintln!("{} delta \x1B[2m{} < {}\x1B[22m", mv, static_eval + (mv.score as i16 * 10) + 150, alpha);
@@ -263,7 +263,7 @@ pub fn resolving_search_leaves(
 
     if !state.incheck && !mv.is_unusual() && !mv.gives_discovered_check() {
       if mv.is_capture() {
-        if !mv.gives_check() && estimate.abs() < LIKELY_MATE {
+        if !mv.gives_check() && estimate.abs() < INEVITABLE_MATE {
           let gain = (mv.score as i32 * 10 * DELTA_SCALE) / 4096 + DELTA_MARGIN;
           if static_eval + (gain as i16) < alpha { continue; }
         }

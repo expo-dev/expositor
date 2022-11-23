@@ -54,6 +54,11 @@ setoption name Persist value <bool>
   (This is achieved by tagging each table entry with a generation and
   does not incur the penalty of actually zeroing the table.) Setting
   this option to true generally increases playing strength.
+
+setoption name SyzygyPath value <path>
+  Inform the engine that Syzygy tablebase files are located in the
+  directory <path> and enable the use of the Syzygy tablebases if the
+  files can be loaded.
 ```
 As well as some nonstandard commands:
 ```
@@ -112,6 +117,8 @@ The two ratings listed under _CCRL 40/15_ in each row are for 1- and 4-thread pe
 - **Error Distribution Search**&ensp;I've been reading and thinking about this since I started chess programming and at one point it was my primary focus. I'd like to pick it up again, deliver a working proof of concept, and then write up my findings.
 
 ## Acknowledgments
+
+This branch uses the library Fathom by Ronald de Man, basil, and Jon Dart for Syzygy tablebase access. The interface to Fathom was written using as reference Asymptote by Maximilian Lupke and Mantissa by Jeremy Wright.
 
 Four sources are currently used to generate training positions:
 - [the Lichess database](https://database.lichess.org/)

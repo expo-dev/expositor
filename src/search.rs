@@ -12,6 +12,7 @@ use crate::piece::*;
 use crate::resolve::*;
 use crate::score::*;
 use crate::state::*;
+use crate::syzygy::*;
 use crate::tablebase::*;
 use crate::util::*;
 
@@ -159,17 +160,21 @@ fn main_search(
     if alpha >= beta { return alpha; }
   }
 
-  if height > 0 && state.rights == 0 && state.dfz == 0
+  let excluded_move = context.exclude[height as usize].clone();
+
+  if height > 0 && state.rights == 0 && excluded_move.is_null() && state.dfz == 0
   {
     let men = (state.sides[W] | state.sides[B]).count_ones();
-    /* ↓↓↓ INCOMPLETE ↓↓↓ //
-    if men == 4 { return probe_4man(state, height as i16); }
-    // ↑↑↑ INCOMPLETE ↑↑↑ */
     if men == 3 { return probe_3man(state, height as i16); }
+    if syzygy_active() && syzygy_support() >= men {
+      if let Some(score) = probe_syzygy_wdl(&state, height as i16) {
+        stats.tb_hits += 1;
+        return score;
+      }
+    }
   }
 
   // Step 4. Transposition table lookup and internal iterative reduction
-  let excluded_move = context.exclude[height as usize].clone();
   let mut depth = depth;
 
   let mut hint_move = NULL_MOVE;
@@ -191,9 +196,9 @@ fn main_search(
   }
   if entry.hint_move != 0 && okay_generation {
     let score =
-      if      entry.hint_score >= MINIMUM_PROVEN_MATE { entry.hint_score - height as i16 }
-      else if MINIMUM_PROVEN_LOSS >= entry.hint_score { entry.hint_score + height as i16 }
-      else                                            { entry.hint_score                 };
+      if      entry.hint_score >= MINIMUM_TB_MATE { entry.hint_score - height as i16 }
+      else if MINIMUM_TB_LOSS >= entry.hint_score { entry.hint_score + height as i16 }
+      else                                        { entry.hint_score                 };
     if zerowind && entry.depth >= depth {
       if (entry.kind as u8) & (NodeKind::Cut as u8) != 0 && score >= beta  { return score; }
       if (entry.kind as u8) & (NodeKind::All as u8) != 0 && alpha >= score { return score; }
@@ -290,7 +295,7 @@ fn main_search(
     && !hint_move.is_null()
     && entry.depth >= depth - 2
     && (entry.kind as u8) & (NodeKind::Cut as u8) != 0
-    && hint_score.abs() < MINIMUM_PROVEN_MATE
+    && hint_score.abs() < MINIMUM_TB_MATE
   {
     let reduction = SSE_BASE + (depth as i32)*SSE_SCALE;
     let sse_depth = ((depth as u32)*4096 - (reduction as u32)) / 4096;
@@ -364,7 +369,7 @@ fn main_search(
 
       // Step 8b. Futility pruning (set up in step 6)
       if depth < 8
-        && alpha > LIKELY_LOSS
+        && alpha > INEVITABLE_LOSS
         && lower_estimate != i16::MIN
         && lower_estimate + FP_OFFSET + (depth as i16)*FP_SCALE < alpha
       { futile = true; }
@@ -521,9 +526,9 @@ fn main_search(
 
   if excluded_move.is_null() {
     let table_score =
-      if      best_score >= MINIMUM_PROVEN_MATE { best_score + height as i16 }
-      else if best_score <= MINIMUM_PROVEN_LOSS { best_score - height as i16 }
-      else                                      { best_score                 };
+      if      best_score >= MINIMUM_TB_MATE { best_score + height as i16 }
+      else if best_score <= MINIMUM_TB_LOSS { best_score - height as i16 }
+      else                                  { best_score                 };
 
     table_update(TableEntry {
       key:        if state.dfz > 92 { state.key ^ state.dfz as u64 } else { state.key },
@@ -683,13 +688,15 @@ fn best_move(
     let mut ext_depth = 0;
     for x in 0..128 { if statistics.r_nodes_at_height[x] != 0 { ext_depth = x; } }
 
-    let mut nodes = 0;
+    let mut nodes  = 0;
+    let mut tbhits = 0;
     unsafe {
       let num_threads = NUM_THREADS;
       for id in 0..num_threads {
         // These values might be slightly out of date, but we don't mind
-        nodes += STATISTICS[id].m_nodes_at_height.iter().sum::<usize>();
-        nodes += STATISTICS[id].r_nodes_at_height.iter().sum::<usize>();
+        nodes  += STATISTICS[id].m_nodes_at_height.iter().sum::<usize>();
+        nodes  += STATISTICS[id].r_nodes_at_height.iter().sum::<usize>();
+        tbhits += STATISTICS[id].tb_hits;
       }
     }
 
@@ -712,8 +719,8 @@ fn best_move(
     }
     if !isatty(STDOUT) || !isatty(STDERR) {
       print!(
-        "info depth {} seldepth {} nodes {} time {:.0} nps {:.0} score {}",
-        step, ext_depth+1, nodes, time_to_depth * 1000.0, nps, format_uci_score(score)
+        "info depth {} seldepth {} nodes {} tbhits {} time {:.0} nps {:.0} score {}",
+        step, ext_depth+1, nodes, tbhits, time_to_depth * 1000.0, nps, format_uci_score(score)
       );
       if !context.pv[0].is_empty() {
         print!(" multipv 1 pv");
