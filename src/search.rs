@@ -770,11 +770,13 @@ fn best_move(
           if estimate > hard_limit && stability > 1 { break; }
         }
 
+        let s = 0.002_469_135_802_469_135_8;
+        let t = 0.333_333_333_333_333_333_3;
         let downfactor =
           if stability == 1       { 1.5 }
           else if wgt_stbly <  30 { 1.0 }
-          else if wgt_stbly < 230 { 1.0 - 0.004 * (wgt_stbly - 30) as f64 }
-          else                    { 0.2 };
+          else if wgt_stbly < 300 { 1.0 - s * (wgt_stbly - 30) as f64 }
+          else                    { t };
         let upfactor =
           if      wgt_actv < 10 { 1.0 }
           else if wgt_actv < 60 { 1.0 + 0.02 * (wgt_actv - 10) as f64 }
