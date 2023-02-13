@@ -113,15 +113,11 @@ impl SearchParams {
       }
       // If we wanted to spend the same time per move, we'd write
       //   base = seconds_remaining / moves_remaining;
-      // but we usually want to spend more time in the opening and midgame, so
-      //   we reshape a bit. We expect the first 10 moves or so to be book, we
-      //   give twenty moves (10–30) a scaling factor of +1/2, we taper over ten
-      //   moves (30–40), and we give twenty moves (40–60) no adjustment. That's
-      //   the average game of chess; beyond that, we also make no adjustment.
+      // but we usually want to spend more time in the opening
+      //   and midgame, so we reshape a bit.
       let base =
-        if      state.ply < 60 { base * 1.5                              }
-        else if state.ply < 80 { base * (3.0 - 0.025 * state.ply as f64) }
-        else                   { base                                    };
+        if state.ply < 80 { base * (1.5 - 0.00625 * state.ply as f64) }
+        else              { base                                      };
       let target = (   base   ).min(seconds_remaining * ONE_THIRD);
       let cutoff = (base * 3.0).min(seconds_remaining * TWO_THIRD);
       limits.target = Some((target - overhead).max(0.0));
