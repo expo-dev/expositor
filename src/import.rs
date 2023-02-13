@@ -290,14 +290,22 @@ fn parse_metadata(tail : &mut std::str::Chars, game : &mut PGNGame) -> Option<&'
     }
     "TimeControl" => {
       if let Some((left, right)) = value.split_once('+') {
-        if let Ok(base) = left.parse::<f32>() { game.base = base; }
-          else { return Some("unable to parse base"); }
-        if let Ok(incr) = right.parse::<f32>() { game.increment = incr; }
-          else { return Some("unable to parse increment"); }
+        if let Ok(base) = left.parse::<f32>() {
+          if let Ok(incr) = right.parse::<f32>() {
+            game.base = base;
+            game.increment = incr;
+          }
+        }
       }
-      else {
-        return Some("unable to parse time control");
-      }
+      // if let Some((left, right)) = value.split_once('+') {
+      //   if let Ok(base) = left.parse::<f32>() { game.base = base; }
+      //     else { return Some("unable to parse base"); }
+      //   if let Ok(incr) = right.parse::<f32>() { game.increment = incr; }
+      //     else { return Some("unable to parse increment"); }
+      // }
+      // else {
+      //   return Some("unable to parse time control");
+      // }
     }
     _ => {}
   }

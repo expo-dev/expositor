@@ -623,8 +623,8 @@ fn best_move(
   let mut ratios = [1.5, 1.5, 1.5, 1.5];
   let mut last_best = NULL_MOVE;
   let mut stability = 0;
-  let mut wgt_stbly : u16 = 0;
-  let mut wgt_actv  : u16 = 0;
+  // let mut wgt_stbly : u16 = 0;
+  // let mut wgt_actv  : u16 = 0;
 
   let mut last_step = 0;
   let mut last_pv;
@@ -674,12 +674,12 @@ fn best_move(
 
     if quick_eq(&best, &last_best) {
       stability += 1;
-      wgt_stbly += step as u16;
+    //   wgt_stbly += step as u16;
     }
     else {
       stability = 1;
-      wgt_stbly = step as u16;
-      wgt_actv += step as u16;
+    //   wgt_stbly = step as u16;
+    //   wgt_actv += step as u16;
     };
     last_best = best.clone();
 
@@ -770,18 +770,18 @@ fn best_move(
           if estimate > hard_limit && stability > 1 { break; }
         }
 
-        let s = 0.002_469_135_802_469_135_8;
-        let t = 0.333_333_333_333_333_333_3;
-        let downfactor =
-          if stability == 1       { 1.5 }
-          else if wgt_stbly <  30 { 1.0 }
-          else if wgt_stbly < 300 { 1.0 - s * (wgt_stbly - 30) as f64 }
-          else                    { t };
-        let upfactor =
-          if      wgt_actv < 10 { 1.0 }
-          else if wgt_actv < 60 { 1.0 + 0.02 * (wgt_actv - 10) as f64 }
-          else                  { 2.0 };
-        let target = target * upfactor * downfactor;
+        // let s = 0.002_469_135_802_469_135_8;
+        // let t = 0.333_333_333_333_333_333_3;
+        // let downfactor =
+        //   if stability == 1       { 1.5 }
+        //   else if wgt_stbly <  30 { 1.0 }
+        //   else if wgt_stbly < 300 { 1.0 - s * (wgt_stbly - 30) as f64 }
+        //   else                    { t };
+        // let upfactor =
+        //   if      wgt_actv < 10 { 1.0 }
+        //   else if wgt_actv < 60 { 1.0 + 0.02 * (wgt_actv - 10) as f64 }
+        //   else                  { 2.0 };
+        // let target = target * upfactor * downfactor;
 
         if estimate - target > target - time_to_depth { break; }
       }

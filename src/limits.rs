@@ -128,12 +128,12 @@ impl SearchParams {
 
 fn linear_model(state : &State) -> f64
 {
-  // Fit from TCEC games and games that Expositor played on Lichess
-  //   that were all at least 30 moves long and less than 120 moves long.
-  // The coefficient of determination for the regression is about 0·47
-  //   and the mean absolute deviation was about 25·5 ply.
+  // Fit from TCEC games from Season 19 onward that were all at least 30 moves
+  //   long and less than 121 moves long.
+  // The coefficient of determination for the regression is about 0·48 and the
+  //   mean absolute deviation was about 27 ply.
   let ply = state.ply as f64;
   let men = (state.sides[0] | state.sides[1]).count_ones() as f64 - 2.0;
-  let rem = 39.0 - ply*0.25 + men*2.6;
+  let rem = 29.0 - ply*0.20 + men*3.0;
   return rem;
 }
