@@ -98,7 +98,7 @@ impl SearchParams {
       }
       else {
         let ply_remaining = linear_model(state);
-        moves_remaining = (ply_remaining * 0.5).max(if no_increment { 24.0 } else { 8.0 });
+        moves_remaining = (ply_remaining * 0.5).max(if no_increment { 24.0 } else { 12.0 });
       }
 
       const ONE_THIRD : f64 = 0.333_333_333_333_333_333;
