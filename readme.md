@@ -1,9 +1,24 @@
-<p align="center"><img src="pic/escutcheon.png" style="width: 16em;"></p>
 <img src="pic/nameplate-2BR17.png" style="width: 16em;">
 
 Expositor is a UCI-conforming chess engine for AMD&thinsp;64 / Intel&thinsp;64 systems. You can [play against her on Lichess](https://lichess.org/@/expositor) or download a copy for local use.
 
-Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404) rating of 3288 running singlythreaded (#41) and a [CCRL 40/15](https://www.computerchess.org.uk/ccrl/4040) rating of 3315 running with four threads (#33). You can read about her background on the [TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
+Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404) rating of 3304 running singlythreaded (#54) and a [CCRL 40/15](https://www.computerchess.org.uk/ccrl/4040) rating of 3312 running with four threads (#39). You can read about her background on the [TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
+
+## Status
+
+It's been many months since the last release and, aside from some time management adjustments for TCEC, quite a while since I pushed any commits to the public repository, so I want to say a word about the status of the project.
+
+- The project hasn't been abandoned. Bootstrapping is still my first priority and, although I've taken some breaks, I've continued to work on the HCE.
+
+- For a little while, I was instead working on a better [specification of the Universal Chess Interface](https://expositor.dev/uci-2022-12-29.pdf). Several people were supportive (and I'm very grateful for that &ndash; thank you!) but there were also some very discouraging responses, enough so that I put it aside. Hopefully, with my stamina recovered, I'll eventually pick this up again and publish a second draft. If you have any comments on the first draft, I'd love to hear them; you can contact me at `expositor` at `fastmail.com`.
+
+- There are a handful of other, small features that I've worked out, such as support for huge pages and setting processor affinity.
+
+I expect it will be several months more before the next release of Expositor: a few months to finish writing the HCE and a few months to then train two or three iterations of the NNUE. There are particular goals and constraints that I have for the HCE and, since I expect that I won't ever touch the HCE again after I've finished it, I want to get it right. I've started over multiple times and thrown away most of what I've written, and I've lost count of the number of versions there have been, but I do feel I've been making progress.
+
+As ever, stay safe, and thank you for your interest in Expositor!
+
+&ndash; the Expositor dev<br>&ensp;&ensp;23 Apr 2023
 
 ## Releases
 
@@ -85,6 +100,9 @@ stderr-isatty <bool>
 stdout-isatty <bool>
   Inform the engine that stdout is (or is not) connected to a terminal,
   or to behave as if stdout is (or is not) connected to a terminal.
+
+isatty <bool>
+  Shorthand to set both stderr-isatty and stdout-isatty.
 ```
 Expositor is lenient when reading moves &ndash; short algebraic notation can be used wherever long algebraic notation is expected. The current position can also be set by entering FEN directly (without being prefaced by `position fen `) or by entering a PGN movelist (movetext without comments or evaluation annotations).
 
@@ -96,9 +114,9 @@ If you find any bugs or have any questions, please file an issue on Github or se
 
 | Version | Release Date | CCRL Blitz |    CCRL 40/15     | Notes                                         |
 |:-------:|:------------:|:----------:|:-----------------:|:----------------------------------------------|
-|  2BR17  |  17 Sep 2022 |    3288    | 3205 &ndash; 3315 | fixes, tuned search, internal 3-man tablebase |
-|  2WN29  |  29 May 2022 |    3192    | 3149 &ndash; 3242 | fixes, better time control, cache persistence |
-|  2WQ23  |  23 Feb 2022 |    3117    | 3078 &ndash; unkn | first public release                          |
+|  2BR17  |  17 Sep 2022 |    3304    | 3211 &ndash; 3312 | fixes, tuned search, internal 3-man tablebase |
+|  2WN29  |  29 May 2022 |    3212    | 3148 &ndash; 3241 | fixes, better time control, cache persistence |
+|  2WQ23  |  23 Feb 2022 |    3142    | 3077 &ndash; unkn | first public release                          |
 
 The two ratings listed under _CCRL 40/15_ in each row are for 1- and 4-thread performance.
 
@@ -112,19 +130,19 @@ The two ratings listed under _CCRL 40/15_ in each row are for 1- and 4-thread pe
 
 - **Error Distribution Search**&ensp;I've been reading and thinking about this since I started chess programming and at one point it was my primary focus. I'd like to pick it up again, deliver a working proof of concept, and then write up my findings.
 
-- **Syzygy Tablebase Support**&ensp;I'd like to write my own implementation of Syzygy tablebase support (so that Expositor continues to have no dependencies and includes no external code). The `tcec` branch currently has Syzygy tablebase support, however, by means of the Fathom library, but note that this version will never be released.
+- **Syzygy Tablebase Support**&ensp;I'd like to write my own implementation of Syzygy tablebase support (so that Expositor continues to have no dependencies and includes no external code). The `tcec` branch currently has Syzygy tablebase support, however, by means of the Fathom library.
 
 ## Acknowledgments
 
-Four sources are currently used to generate training positions:
+Four sources were used to generate training positions:
 - [the Lichess database](https://database.lichess.org/)
 - [the Lichess elite database](https://database.nikonoel.fr/)
 - [old Ethereal datasets](http://talkchess.com/forum3/viewtopic.php?t=75350)
 - [the TCEC games archive](https://github.com/TCEC-Chess/tcecgames)
 
-These are processed by Expositor with her quiescing search and the leaves from those searches are then scored with a gold-standard engine, usually some version of [Stockfish](https://github.com/official-stockfish/Stockfish). Those scored leaves are then filtered and the network is trained on the selected positions. (Note that the network and training code is original &ndash; network weights for other engines are not compatible with Expositor.)
+These were processed by Expositor with her quiescing search and the leaves from those searches were then scored with a gold-standard engine, usually a version of [Stockfish](https://github.com/official-stockfish/Stockfish). Those scored leaves were then filtered and the network was trained on the selected positions. (Note that the network and training code is original &ndash; network weights for other engines are not compatible with Expositor.)
 
-Most of the positions used for perft tests are from the [Zahak](https://github.com/amanjpro/zahak) repository.
+Most of the positions used for perft tests were from the [Zahak](https://github.com/amanjpro/zahak) repository.
 
 Particular thanks to [Jeremy Wright](https://github.com/jtheardw/mantissa) for help with main search. Many techniques were implemented from his verbal descriptions during our conversations.
 
