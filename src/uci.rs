@@ -72,7 +72,7 @@ pub fn uci() -> std::io::Result<()>
 
       "uci" => {
         println!("id name Expositor {}", VERSION);
-        println!("id author Kade");
+        println!("id author Korawend");
         println!("option name Hash type spin default {} min 1 max 262144", CACHE_SIZE_DEFAULT >> 20);
         println!("option name Threads type spin default {} min 1 max 252", SEARCH_THREADS_DEFAULT);
         println!("option name Overhead type spin default {} min 0 max 1000", SEARCH_OVERHEAD_DEFAULT);
@@ -693,7 +693,7 @@ DESCRIPTION
   entering a PGN movelist (movetext without comments or evaluation annotations).
 
 COPYRIGHT
-  Copyright 2022 Kade <expositor@fastmail.com>
+  Copyright 2023 Korawend <expositor@fastmail.com>
   This is free software, and you are welcome to modify and redistribute it under
   certain conditions.  If users can interact with a modified version of the pro-
   gram (or a work based on the program) remotely through a computer network, you
@@ -703,7 +703,7 @@ COPYRIGHT
 
 const LICENSE : &str = "
   Expositor (chess engine)
-  Copyright 2022 Kade
+  Copyright 2023 Korawend
 
   This program is free software: you can redistribute it and/or modify it under
   the terms of version 3 of the GNU Affero General Public License (as published

@@ -1,7 +1,7 @@
 [package]
 name = "expositor"
 version = "2.0.0"
-authors = ["kade <kade@protonmail.ch>"]
+authors = ["kora <expositor@fastmail.com>"]
 edition = "2018"
 
 [profile.test]
