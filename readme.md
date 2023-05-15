@@ -12,13 +12,19 @@ It's been many months since the last release and, aside from some time managemen
 
 - For a little while, I was instead working on a better [specification of the Universal Chess Interface](https://expositor.dev/uci-2022-12-29.pdf). Several people were supportive (and I'm very grateful for that &ndash; thank you!) but there were also some very discouraging responses, enough so that I put it aside. Hopefully, with my stamina recovered, I'll eventually pick this up again and publish a second draft. If you have any comments on the first draft, I'd love to hear them; you can contact me at `expositor` at `fastmail.com`.
 
+- I've relented and decided to include Syzygy support through the use of Fathom, since that's a valuable feature and I won't get around to writing my own implementation as soon as I had hoped.
+
+- Some of the core classes have been rewritten and a few things have been cleaned up, and I've made several improvements to the tooling I use for developing Expositor.
+
 - There are a handful of other, small features that I've worked out, such as support for huge pages and setting processor affinity.
 
-I expect it will be several months more before the next release of Expositor: a few months to finish writing the HCE and a few months to then train two or three iterations of the NNUE. There are particular goals and constraints that I have for the HCE and, since I expect that I won't ever touch the HCE again after I've finished it, I want to get it right. I've started over multiple times and thrown away most of what I've written, and I've lost count of the number of versions there have been, but I do feel I've been making progress.
+I expect it will be several months more before the next major release of Expositor: a few months to finish writing the HCE and a few months to then train two or three iterations of the NNUE. There are particular goals and constraints that I have for the HCE and, since I expect that I won't ever touch the HCE again after I've finished it, I want to get it right. I've started over multiple times and thrown away most of what I've written, and I've lost count of the number of versions there have been, but I do feel I've been making progress. It's unclear whether it will ultimately resemble traditional HCEs in any meaningful way; there's a decent chance I will end up calling it something else to communicate that fact.
+
+There may be a minor release of Expositor next month. I do not expect it to be stronger than 2BR17 at standard chess, but it will be significantly stronger at [chess 324](https://talkchess.com/forum3/viewtopic.php?f=2&t=80482) &ndash; the most recent network I trained performed 100 Elo stronger at bullet time controls.
 
 As ever, stay safe, and thank you for your interest in Expositor!
 
-&ndash; the Expositor dev<br>&ensp;&ensp;23 Apr 2023
+&ndash; the Expositor dev<br>&ensp;&ensp;15 May 2023
 
 ## Releases
 
