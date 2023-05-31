@@ -2,7 +2,9 @@
 
 Expositor is a UCI-conforming chess engine for AMD&thinsp;64 / Intel&thinsp;64 systems. You can [play against her on Lichess](https://lichess.org/@/expositor) or download a copy for local use.
 
-Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404) rating of 3304 running singlythreaded (#54) and a [CCRL 40/15](https://www.computerchess.org.uk/ccrl/4040) rating of 3312 running with four threads (#39). You can read about her background on the [TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
+Expositor currently has a [CCRL Blitz](https://www.computerchess.org.uk/ccrl/404) rating of about 3300 running singlythreaded (about #55) and a [CCRL 40/15](https://www.computerchess.org.uk/ccrl/4040) rating of about 3310 running with four threads (about #40). You can read about her background on the [TalkChess forums](http://talkchess.com/forum3/viewtopic.php?f=2&t=79407).
+
+The name _Expositor_ comes from _exponent_ &ndash; the root of both is [_expōnēns_](https://en.wiktionary.org/wiki/exponent#Etymology). An exponent is one part of a floating-point number (along with a sign, significand, and radix). My friend and I started chess programming at the same time; his engine is named _Mantissa,_ which is another name for a significand. The name _Expositor_ also contains the word _posit,_ which is the name for an interesting and rather lovely [alternative format](https://posithub.org/docs/posit_standard-2.pdf) to the usual IEEE 754.
 
 ## Status
 
