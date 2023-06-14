@@ -1,7 +1,7 @@
-use crate::algebraic::*;
-use crate::color::*;
-use crate::piece::*;
-use crate::state::*;
+use crate::algebraic::Algebraic;
+use crate::color::Color::*;
+use crate::piece::Piece::*;
+use crate::state::State;
 
 use std::str::SplitAsciiWhitespace;
 
@@ -21,11 +21,11 @@ impl State {
     let mut state = State {
       sides:   [0; 2],
       boards:  [0; 16],
-      squares: [Piece::NullPiece; 64],
+      squares: [Null; 64],
       rights:  0,
       enpass:  -1,
       incheck: false,
-      turn:    Color::White,
+      turn:    White,
       dfz:     0,
       ply:     0,
       key:     0,
@@ -33,12 +33,12 @@ impl State {
     };
     let layout = match record.next() {
       Some(field) => field,
-      None => return Err("missing board layout")
+      None => return Err("nothing to parse")
     };
     let mut rank : i8 = 7;
     let mut file : i8 = 0;
     for c in layout.as_bytes() {
-      if *c as char == '/' {
+      if *c == b'/' {
         rank -= 1;
         if rank < 0 { return Err("more than eight ranks"); }
         if file != 8 { return Err("incomplete rank"); }
@@ -46,29 +46,29 @@ impl State {
         continue;
       }
       if file > 7 { return Err("more than eight files"); }
-      if ('8' as u8) >= *c && *c > ('0' as u8) {
-        file += (c - ('0' as u8)) as i8;
+      if b'8' >= *c && *c > b'0' {
+        file += c.wrapping_sub(b'0') as i8;
         continue;
       }
-      let piece = match *c as char {
-        'K' => Piece::WhiteKing   ,
-        'Q' => Piece::WhiteQueen  ,
-        'R' => Piece::WhiteRook   ,
-        'B' => Piece::WhiteBishop ,
-        'N' => Piece::WhiteKnight ,
-        'P' => Piece::WhitePawn   ,
-        'k' => Piece::BlackKing   ,
-        'q' => Piece::BlackQueen  ,
-        'r' => Piece::BlackRook   ,
-        'b' => Piece::BlackBishop ,
-        'n' => Piece::BlackKnight ,
-        'p' => Piece::BlackPawn   ,
-         _  => return Err("extraneous character in board layout")
+      let piece = match *c {
+        b'K' => WhiteKing   ,
+        b'Q' => WhiteQueen  ,
+        b'R' => WhiteRook   ,
+        b'B' => WhiteBishop ,
+        b'N' => WhiteKnight ,
+        b'P' => WhitePawn   ,
+        b'k' => BlackKing   ,
+        b'q' => BlackQueen  ,
+        b'r' => BlackRook   ,
+        b'b' => BlackBishop ,
+        b'n' => BlackKnight ,
+        b'p' => BlackPawn   ,
+        _ => return Err("spurious character in layout")
       };
-      let square = rank*8 + file;
-      state.sides[piece.color() as usize] |= 1u64 << square;
-      state.boards[piece as usize] |= 1u64 << square;
-      state.squares[square as usize] = piece;
+      let square = (rank*8 + file) as usize;
+      state.sides[piece.color()] |= 1u64 << square;
+      state.boards[piece] |= 1u64 << square;
+      state.squares[square] = piece;
       file += 1;
     }
     if rank != 0 { return Err("fewer than eight ranks"); }
@@ -78,9 +78,9 @@ impl State {
       None => return Err("missing side to move")
     };
     state.turn = match side_to_move {
-      "w" => Color::White,
-      "b" => Color::Black,
-       _  => return Err("side to move is not 'w' or 'b'")
+      "w" => White,
+      "b" => Black,
+       _  => return Err("invalid side to move")
     };
 
     let rights = match record.next() {
@@ -89,23 +89,23 @@ impl State {
     };
     if rights != "-" {
       for c in rights.as_bytes() {
-        state.rights |= match *c as char {
-          'K' => 1,
-          'Q' => 2,
-          'k' => 4,
-          'q' => 8,
-           _  => return Err("spurious character in castling rights")
+        state.rights |= match *c {
+          b'K' => 1,
+          b'Q' => 2,
+          b'k' => 4,
+          b'q' => 8,
+          _  => return Err("spurious character in rights")
         };
       }
     }
 
-    if state.boards[WHITE+KING] & 0x0000000000000010 == 0 { state.rights &= 0xC; }
-    if state.boards[WHITE+ROOK] & 0x0000000000000080 == 0 { state.rights &= 0xE; }
-    if state.boards[WHITE+ROOK] & 0x0000000000000001 == 0 { state.rights &= 0xD; }
+    if state.boards[WhiteKing] & (1 << 4) == 0 { state.rights &= 0b_1100; }
+    if state.boards[WhiteRook] & (1 << 7) == 0 { state.rights &= 0b_1110; }
+    if state.boards[WhiteRook] & (1 << 0) == 0 { state.rights &= 0b_1101; }
 
-    if state.boards[BLACK+KING] & 0x1000000000000010 == 0 { state.rights &= 0x3; }
-    if state.boards[BLACK+ROOK] & 0x8000000000000080 == 0 { state.rights &= 0xB; }
-    if state.boards[BLACK+ROOK] & 0x0100000000000001 == 0 { state.rights &= 0x7; }
+    if state.boards[BlackKing] & (1 << 60) == 0 { state.rights &= 0b_0011; }
+    if state.boards[BlackRook] & (1 << 63) == 0 { state.rights &= 0b_1011; }
+    if state.boards[BlackRook] & (1 << 56) == 0 { state.rights &= 0b_0111; }
 
     let enpass = match record.next() {
       Some(field) => field,
@@ -161,7 +161,7 @@ impl State {
             record.push_str(&run.to_string());
             run = 0;
           }
-          record.push(ABBREVIATION[self.squares[idx] as usize]);
+          record.push(self.squares[idx].abbrev());
         }
       }
       if run > 0 { record.push_str(&run.to_string()); }
@@ -169,16 +169,16 @@ impl State {
     }
 
     record.push(match self.turn {
-      Color::White => 'w',
-      Color::Black => 'b',
+      White => 'w',
+      Black => 'b',
     });
 
     record.push(' ');
 
-    let white_kingside  = self.rights & 0x01 != 0;
-    let white_queenside = self.rights & 0x02 != 0;
-    let black_kingside  = self.rights & 0x04 != 0;
-    let black_queenside = self.rights & 0x08 != 0;
+    let white_kingside  = self.rights & 1 != 0;
+    let white_queenside = self.rights & 2 != 0;
+    let black_kingside  = self.rights & 4 != 0;
+    let black_queenside = self.rights & 8 != 0;
     if !white_kingside && !white_queenside && !black_kingside && !black_queenside {
       record.push('-');
     }

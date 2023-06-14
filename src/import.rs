@@ -1,87 +1,53 @@
-use crate::algebraic::*;
-use crate::color::*;
-use crate::movetype::*;
-use crate::state::*;
-use crate::score::*;
+use crate::algebraic::parse_short;
+use crate::movetype::Move;
+use crate::score::Outcome;
+use crate::score::{PROVEN_MATE, PROVEN_LOSS};
+use crate::state::{MiniState, State};
 
 use std::fs::File;
 use std::io::{BufReader, BufRead, Seek, Error};
 
-const BUFSIZE : usize = 2097152;
+const BUFSIZE : usize = 2_097_152;
 
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-// ↓↓↓ TEMPORARY ↓↓↓
-
-pub fn canonicalize(path : &str) -> std::io::Result<()>
-{
-  let reader = BufReader::with_capacity(BUFSIZE, File::open(path)?);
-  for line in reader.lines() {
-    let line = line?;
-    let mut fields = line.split_ascii_whitespace();
-    if let Some(score) = fields.next() {
-      for f in fields { print!("{f} "); }
-      println!("= {score}");
-    }
-  }
-  return Ok(());
-}
-
-// ↑↑↑ TEMPORARY ↑↑↑
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-// The outcome codes are "w" (1-0), "b" (0-1), "d" (1/2-1/2), and "*" (incomplete),
-//   e.g. "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 = +5.0 w".
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ScoreUnit {
-  IntegerCentipawn,
-  FractionalPawn,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ScoreSign {
-  LeaveUnchanged,
-  FlipWhenBlackToMove,
-}
-
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-
-pub struct FENReader {
-  reader : BufReader<File>,
-  buffer : String,
-  scored : bool,
-  unit   : ScoreUnit,
-  sign   : ScoreSign
-}
-
-pub struct PGNReader {
+pub struct QuickReader {
   reader : BufReader<File>,
   buffer : String,
   line   : usize
 }
 
-impl FENReader {
+pub struct FenReader {
+  reader : BufReader<File>,
+  buffer : String,
+  line   : usize,
+}
+
+pub struct PgnReader {
+  reader : BufReader<File>,
+  buffer : String,
+  line   : usize
+}
+
+impl QuickReader {
   pub fn open(path : &str) -> std::io::Result<Self> {
     return Ok(Self {
       reader: BufReader::with_capacity(BUFSIZE, File::open(path)?),
       buffer: String::new(),
-      scored: false,
-      unit: ScoreUnit::IntegerCentipawn,
-      sign: ScoreSign::LeaveUnchanged
-    });
-  }
-
-  pub fn open_scored(path : &str, unit : ScoreUnit, sign : ScoreSign) -> std::io::Result<Self> {
-    return Ok(Self {
-      reader: BufReader::with_capacity(BUFSIZE, File::open(path)?),
-      buffer: String::new(),
-      scored: true,
-      unit: unit,
-      sign: sign
+      line: 0
     });
   }
 }
 
-impl PGNReader {
+impl FenReader {
+  pub fn open(path : &str) -> std::io::Result<Self> {
+    return Ok(Self {
+      reader: BufReader::with_capacity(BUFSIZE, File::open(path)?),
+      buffer: String::new(),
+      line: 0
+    });
+  }
+}
+
+impl PgnReader {
   pub fn open(path : &str) -> std::io::Result<Self> {
     return Ok(Self {
       reader: BufReader::with_capacity(BUFSIZE, File::open(path)?),
@@ -93,104 +59,95 @@ impl PGNReader {
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-#[inline]
-fn parse_fen_line(
-  line   : &str,
-  scored : bool,
-  unit   : ScoreUnit,
-  sign   : ScoreSign
-) -> std::io::Result<(State, i16, i16)> // (position, score, outcome)
-{
-  let mut fields = line.split_ascii_whitespace();
-  let state =
-    match State::from_fen_fields(&mut fields) {
-      Ok(s) => s, Err(msg) => return Err(Error::other(msg))
-    };
-
-  if !scored { return Ok((state, i16::MIN, i16::MIN)); }  // ignore trailing fields
-
-  match fields.next() {
-    None => { return Ok((state, i16::MIN, i16::MIN)); }
-    Some(delim) => { if delim != "=" { return Err(Error::other("missing delimiter")); } }
-  }
-
-  let fst = match fields.next() {
-    Some(a) => a, None => return Err(Error::other("missing score or outcome"))
-  };
-
-  loop {
-    let outcome;
-    match fst {
-      "w" => { outcome =  1; }
-      "d" => { outcome =  0; }
-      "b" => { outcome = -1; }
-      "*" => { outcome = i16::MIN; }
-       _  => { break; }
-    }
-    if fields.next().is_none() {
-      return Ok((state, i16::MIN, outcome));
-    }
-    else {
-      return Err(Error::other("trailing fields"));
-    }
-  }
-
-  let mut score;
-  match unit {
-    ScoreUnit::IntegerCentipawn => {
-      score = match fst.parse::<i16>() {
-         Ok(x) => x,
-        Err(_) => match fst {
-          "+#" => PROVEN_MATE,
-          "-#" => PROVEN_LOSS,
-          _ => return Err(Error::other("unable to parse score"))
-        }
-      };
-    }
-    ScoreUnit::FractionalPawn => {
-      score = match fst.parse::<f32>() {
-         Ok(x) => (x * 100.0).round() as i16,
-        Err(_) => match fst {
-          "+#" => PROVEN_MATE,
-          "-#" => PROVEN_LOSS,
-          _ => return Err(Error::other("unable to parse score"))
-        }
-      };
-    }
-  }
-
-  if sign == ScoreSign::FlipWhenBlackToMove && state.turn == Color::Black { score = -score; }
-
-  let mut outcome = i16::MIN;
-  if let Some(snd) = fields.next() {
-    match snd {
-      "w" => { outcome =  1; }
-      "d" => { outcome =  0; }
-      "b" => { outcome = -1; }
-      "*" => { /* nothing */ }
-       _  => { return Err(Error::other("invalid outcome")); }
-    }
-  }
-
-  return Ok((state, score, outcome));
-}
-
-impl Iterator for FENReader {
-  type Item = std::io::Result<(State, i16, i16)>;
+impl Iterator for QuickReader {
+  type Item = std::io::Result<MiniState>;
 
   fn next(&mut self) -> Option<Self::Item> {
     self.buffer.clear();
+    self.line += 1;
     return match self.reader.read_line(&mut self.buffer) {
       Err(e) => Some(Err(e)),
-      Ok(sz) => if sz == 0 { None } else {
-        Some(parse_fen_line(&self.buffer, self.scored, self.unit, self.sign))
-      }
+      Ok(sz) =>
+        if sz == 0 {
+          None
+        }
+        else if sz != 41 {
+          Some(Err(Error::other(format!("{}: incorrect length {}", self.line, sz))))
+        }
+        else {
+          let ptr = self.buffer.as_ptr() as *const [u8; 40];
+          let record = unsafe { &*ptr };
+          Some(Ok(MiniState::from_quick(record)))
+        }
     };
   }
 }
 
-impl FENReader {
-  pub fn collect(self) -> std::io::Result<Vec<(State, i16, i16)>>
+impl QuickReader {
+  pub fn collect(self) -> std::io::Result<Vec<MiniState>>
+  {
+    let mut ms = Vec::new();
+    for state in self {
+      match state {
+        Ok(m) => { ms.push(m); }
+        Err(e) => { return Err(e); }
+      }
+    }
+    return Ok(ms);
+  }
+
+  // This loops around to the beginning of the file whenever the end is reached.
+  pub fn take(&mut self, n : usize) -> std::io::Result<Vec<MiniState>>
+  {
+    let mut ms = Vec::new();
+    for _ in 0..n {
+      self.buffer.clear();
+      let mut sz = self.reader.read_line(&mut self.buffer)?;
+      if sz == 0 {
+        self.reader.rewind()?;
+        self.line = 0;
+        sz = self.reader.read_line(&mut self.buffer)?;
+        if sz == 0 { return Err(Error::other("file appears to be empty")); }
+      }
+      self.line += 1;
+      if sz != 41 {
+        return Err(Error::other(format!("{}: incorrect length {}", self.line, sz)));
+      }
+      let ptr = self.buffer.as_ptr() as *const [u8; 40];
+      let record = unsafe { &*ptr };
+      ms.push(MiniState::from_quick(record));
+    }
+    return Ok(ms);
+  }
+}
+
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+impl Iterator for FenReader {
+  type Item = std::io::Result<State>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    self.buffer.clear();
+    self.line += 1;
+    return match self.reader.read_line(&mut self.buffer) {
+      Err(e) => Some(Err(e)),
+      Ok(sz) =>
+        if sz == 0 {
+          None
+        }
+        else {
+          let mut fields = self.buffer.split_ascii_whitespace();
+          match State::from_fen_fields(&mut fields) {
+            Ok(s) => Some(Ok(s)),
+            Err(msg) => Some(Err(Error::other(format!("{}: {}", self.line, msg))))
+          }
+        }
+    };
+  }
+}
+
+impl FenReader {
+  pub fn collect(self) -> std::io::Result<Vec<State>>
   {
     let mut fen = Vec::new();
     for state in self {
@@ -203,18 +160,23 @@ impl FENReader {
   }
 
   // This loops around to the beginning of the file whenever the end is reached.
-  pub fn collect_exactly(&mut self, n : usize) -> std::io::Result<Vec<(State, i16, i16)>>
+  pub fn take(&mut self, n : usize) -> std::io::Result<Vec<State>>
   {
     let mut fen = Vec::new();
     for _ in 0..n {
       self.buffer.clear();
       if self.reader.read_line(&mut self.buffer)? == 0 {
         self.reader.rewind()?;
+        self.line = 0;
         if self.reader.read_line(&mut self.buffer)? == 0 {
-          panic!("file appears to be empty");
+          return Err(Error::other("file appears to be empty"));
         }
       }
-      fen.push(parse_fen_line(&self.buffer, self.scored, self.unit, self.sign)?);
+      let mut fields = self.buffer.split_ascii_whitespace();
+      match State::from_fen_fields(&mut fields) {
+        Ok(s) => { fen.push(s); }
+        Err(msg) => { return Err(Error::other(format!("{}: {}", self.line, msg))); }
+      }
     }
     return Ok(fen);
   }
@@ -222,33 +184,30 @@ impl FENReader {
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum GameResult {
-  White,      // 1-0
-  Black,      // 0-1
-  Draw,       // ½-½
-  Incomplete, //  *
-}
-
 // wiki: abandoned, adjudication, normal, time forfeit, unterminated
 // cute: abandoned, adjudication, time forfeit, unterminated, illegal move, stalled connection
 //       (no normal termination – tag is simply omitted)
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum GameTermination {
+pub enum Termination {
   Normal,
   Flag,
 }
 
-pub struct PGNGame {
+// NOTE that the scores are taken verbatim; if the game is from cutechess, that means the scores
+//   are point of view (not white positive) and that the n'th score is the engine evaluation
+//   before the n'th move was made (not after).
+
+pub struct PgnGame {
   pub base        : f32,
   pub increment   : f32,
-  pub result      : GameResult,
-  pub termination : GameTermination,
+  pub result      : Outcome,
+  pub termination : Termination,
   pub initial     : State,
   pub movelist    : Vec<Move>,
+  pub scorelist   : Vec<i16>
 }
 
-fn parse_metadata(tail : &mut std::str::Chars, game : &mut PGNGame) -> Option<&'static str>
+fn parse_metadata(tail : &mut std::str::Chars, game : &mut PgnGame) -> Option<&'static str>
 {
   // Leading whitespace and the opening bracket have been removed by this point.
   //   We consider /^ *([^ ]+) +"(.+?)"/ to be valid: there must be space after
@@ -275,16 +234,16 @@ fn parse_metadata(tail : &mut std::str::Chars, game : &mut PGNGame) -> Option<&'
     }
     "Result" => {
       match value {
-        "1-0"     => { game.result = GameResult::White; }
-        "0-1"     => { game.result = GameResult::Black; }
-        "1/2-1/2" => { game.result = GameResult::Draw;  }
+        "1-0"     => { game.result = Outcome::White; }
+        "0-1"     => { game.result = Outcome::Black; }
+        "1/2-1/2" => { game.result = Outcome::Draw;  }
         _ => {}
       }
     }
     "Termination" => {
       match value.to_ascii_lowercase().as_str() {
-        "normal"       => { game.termination = GameTermination::Normal; }
-        "time forfeit" => { game.termination = GameTermination::Flag;   }
+        "normal"       => { game.termination = Termination::Normal; }
+        "time forfeit" => { game.termination = Termination::Flag;   }
         _ => {}
       }
     }
@@ -312,17 +271,18 @@ fn parse_metadata(tail : &mut std::str::Chars, game : &mut PGNGame) -> Option<&'
   return None;
 }
 
-impl Iterator for PGNReader {
-  type Item = std::io::Result<PGNGame>;
+impl Iterator for PgnReader {
+  type Item = std::io::Result<PgnGame>;
 
   fn next(&mut self) -> Option<Self::Item> {
-    let mut game = PGNGame {
+    let mut game = PgnGame {
       base:        0.0,
       increment:   0.0,
-      result:      GameResult::Incomplete,
-      termination: GameTermination::Normal,
+      result:      Outcome::Unknown,
+      termination: Termination::Normal,
       initial:     State::new(),
-      movelist:    Vec::new()
+      movelist:    Vec::new(),
+      scorelist:   Vec::new()
     };
     // We skip empty lines and parse lines containing metadata (in brackets)
     loop {
@@ -345,12 +305,33 @@ impl Iterator for PGNReader {
       // First we strip out the comments and annotations
       //   (note that we don't support nested comments)
       let mut text = String::new();
+      let mut annot = String::new();
       let mut comment = false;
       for a in self.buffer.chars() {
         if comment {
           if a == '}' {
             if !comment { return Some(Err(Error::other("unpaired brace"))); }
             comment = false;
+            annot.clear();
+          }
+          else if a == '/' {
+            // If this looks like a cutechess annotation, e.g. {+0.31/10 0.41s}
+            //   or {-M12/18 0.15s}, try to parse a score
+            if let Ok(x) = annot.parse::<f32>() {
+              game.scorelist.push((x*100.0) as i16);
+            }
+            else if annot.starts_with("+M") || annot.starts_with("-M") {
+              if let Ok(n) = annot[2..].parse::<u8>() {
+                game.scorelist.push(match annot.as_bytes()[0] as char {
+                  '+' => PROVEN_MATE - (n as i16),
+                  '-' => PROVEN_LOSS + (n as i16),
+                   _  => unreachable!()
+                });
+              }
+            }
+          }
+          else {
+            annot.push(a);
           }
         }
         else {
@@ -372,16 +353,22 @@ impl Iterator for PGNReader {
         if token.ends_with('.') { continue; }
         if token=="1-0" || token=="0-1" || token=="1/2-1/2" || token=="*" {
           let list_result = match token {
-            "1-0"     => GameResult::White,
-            "0-1"     => GameResult::Black,
-            "1/2-1/2" => GameResult::Draw,
-            _         => GameResult::Incomplete
+            "1-0"     => Outcome::White,
+            "0-1"     => Outcome::Black,
+            "1/2-1/2" => Outcome::Draw,
+            _         => Outcome::Unknown
           };
-          if list_result != GameResult::Incomplete {
-            if game.result != GameResult::Incomplete && list_result != game.result {
+          if list_result != Outcome::Unknown {
+            if game.result != Outcome::Unknown && list_result != game.result {
               return Some(Err(Error::other("game result mismatch")));
             }
             game.result = list_result;
+          }
+          // If the number of evaluations doesn't match the number of moves,
+          //   this isn't a cutechess game or we missed / failed parsing an
+          //   annotation (in which case the correspondence is broken)
+          if game.scorelist.len() > 0 && game.scorelist.len() != game.movelist.len() {
+            game.scorelist = Vec::new();
           }
           return Some(Ok(game));
         }
@@ -398,14 +385,18 @@ impl Iterator for PGNReader {
       };
       // Games are definitively completed by reading a result (1-0, 1/2-1/2, 0-1, or *)
       //   but we also accept EOF or an empty line
-      if sz == 0 { return Some(Ok(game)); }
-      if self.buffer.trim_start().is_empty() { return Some(Ok(game)); }
+      if sz == 0 || self.buffer.trim_start().is_empty(){
+        if game.scorelist.len() > 0 && game.scorelist.len() != game.movelist.len() {
+          game.scorelist = Vec::new();
+        }
+        return Some(Ok(game));
+      }
     }
   }
 }
 
-impl PGNReader {
-  pub fn collect(self) -> std::io::Result<Vec<PGNGame>>
+impl PgnReader {
+  pub fn collect(self) -> std::io::Result<Vec<PgnGame>>
   {
     let mut games = Vec::new();
     for state in self {

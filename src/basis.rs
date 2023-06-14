@@ -2,14 +2,14 @@ pub const START_KEY : u64 = 0xbcb6d09a5a6f5d34;
 
 pub const TURN_BASIS : u64 = 0x3e368a0b9ba37a18;
 
-pub const CASTLE_BASIS : [u64; 4] =
+pub static CASTLE_BASIS : [u64; 4] =
   [0x45d49eff2d8bdfc5, 0x2d765a1119b30257, 0x266648652b1e24d6, 0xd822d53d004e89b2];
 
-pub const ENPASS_BASIS : [u64; 8] =
+pub static ENPASS_BASIS : [u64; 8] =
   [0xb6235942033c0ba4, 0x06f19a53568b1358, 0xc477a12a42f6da41, 0x7e9fd152f0d18ca1,
    0xc07c79041f1d3a3f, 0x255aa1cc4277916d, 0x0817e81f809f849a, 0x16a0e5250d98d772];
 
-pub const PIECE_BASIS : [u64; 1024] =
+pub static PIECE_BASIS : [u64; 1024] =
   [0xf837409310a783b4, 0xed2fdc8a6aa8c898, 0xcce6e1541c7b7836, 0x16497c44fd650af3,
    0xbdaa10a26338a92e, 0x23bd0d7b42b075af, 0xafe8a9cc7af16a01, 0x08471a074fff3071,
    0x91dc475d5ae2c129, 0xe3fa7aa3632ca1fe, 0x2879dfff5ecc7ce9, 0x2ba68c43a9d3dfb9,

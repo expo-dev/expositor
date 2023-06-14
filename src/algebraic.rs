@@ -1,10 +1,10 @@
-use crate::color::*;
-use crate::movegen::*;
-use crate::movetype::*;
-use crate::piece::*;
-use crate::state::*;
-
-use std::str::SplitAsciiWhitespace;
+use crate::color::Color::*;
+use crate::misc::{piece_destinations, FILE_A, RANK_1};
+use crate::movegen::Selectivity::Everything;
+use crate::movetype::Move;
+use crate::piece::Kind::*;
+use crate::piece::Piece;
+use crate::state::State;
 
 pub trait Algebraic {
   fn algebraic(&self) -> String;
@@ -13,11 +13,10 @@ pub trait Algebraic {
 impl Algebraic for u8 {
   fn algebraic(&self) -> String
   {
-    if *self >= 64 { return String::from("00"); }
-    let mut s = Vec::new();
-    s.push(('a' as u8) + (*self % 8));
-    s.push(('1' as u8) + (*self / 8));
-    return unsafe { String::from_utf8_unchecked(s) };
+    assert!(*self < 64);
+    return unsafe {
+      String::from_utf8_unchecked(vec![b'a' + self % 8, b'1' + self / 8])
+    };
   }
 }
 
@@ -32,10 +31,14 @@ impl Algebraic for Move {
   fn algebraic(&self) -> String
   {
     if self.is_null() { return String::from("0000"); }
-    let mut out = self.src.algebraic();
-    out.push_str(&self.dst.algebraic());
-    if self.is_promotion() { out.push(LOWER[self.promotion as usize]); }
-    return out;
+    let src = self.src as u8; assert!(src < 64);
+    let dst = self.dst as u8; assert!(dst < 64);
+    let mut s = unsafe { String::from_utf8_unchecked(vec![
+      b'a' + src % 8, b'1' + src / 8,
+      b'a' + dst % 8, b'1' + dst / 8,
+    ]) };
+    if self.is_promotion() { s.push(self.promotion.kind().lower()); }
+    return s;
   }
 }
 
@@ -46,42 +49,41 @@ pub fn parse_long(state : &State, long : &str) -> Result<Move, &'static str>
   let bytes = long.as_bytes();
   if bytes.len() < 4 || bytes.len() > 5 { return Err("incorrect length"); }
 
-  let src_file = bytes[0].wrapping_sub('a' as u8);
-  let src_rank = bytes[1].wrapping_sub('1' as u8);
-  let dst_file = bytes[2].wrapping_sub('a' as u8);
-  let dst_rank = bytes[3].wrapping_sub('1' as u8);
+  let src_file = bytes[0].wrapping_sub(b'a');
+  let src_rank = bytes[1].wrapping_sub(b'1');
+  let dst_file = bytes[2].wrapping_sub(b'a');
+  let dst_rank = bytes[3].wrapping_sub(b'1');
   if src_file >= 8 || src_rank >= 8 || dst_file >= 8 || dst_rank >= 8 {
     return Err("invalid square");
   }
   let src_square = (src_rank*8 + src_file) as i8;
   let dst_square = (dst_rank*8 + dst_file) as i8;
 
-  let mut promotion : Option<Piece> = None;
-
-  if bytes.len() == 5 {
-    let p = bytes[4] as char;
-    promotion = match p {
-      'q' => Some(Piece::new(state.turn, QUEEN  as u8)),
-      'r' => Some(Piece::new(state.turn, ROOK   as u8)),
-      'b' => Some(Piece::new(state.turn, BISHOP as u8)),
-      'n' => Some(Piece::new(state.turn, KNIGHT as u8)),
-       _  => return Err("invalid promotion")
+  let promotion =
+    if bytes.len() == 5 {
+      match bytes[4] {
+        b'q' => state.turn + Queen,
+        b'r' => state.turn + Rook,
+        b'b' => state.turn + Bishop,
+        b'n' => state.turn + Knight,
+        _ => return Err("invalid promotion")
+      }
+    }
+    else {
+      Piece::Null
     };
-  }
 
-  let mut early_moves = Vec::with_capacity(16);
-  let mut late_moves  = Vec::with_capacity(32);
-  state.generate_legal_moves(Selectivity::Everything, &mut early_moves, &mut late_moves);
+  let (early_moves, late_moves) = state.legal_moves(Everything);
 
   for mv in early_moves.into_iter().chain(late_moves.into_iter()) {
     if mv.src != src_square { continue; }
     if mv.dst != dst_square { continue; }
-    match promotion {
-      None => if mv.is_promotion() { continue; }
-      Some(p) => {
-        if !mv.is_promotion() { continue; }
-        if mv.promotion != p { continue; }
-      }
+    if promotion.is_null() {
+      if mv.is_promotion() { continue; }
+    }
+    else {
+      if !mv.is_promotion() { continue; }
+      if mv.promotion != promotion { continue; }
     }
     return Ok(mv);
   }
@@ -92,13 +94,16 @@ pub fn parse_short(state : &State, short : &str) -> Result<Move, &'static str>
 {
   #[cfg(debug_assertions)] if !short.is_ascii() { return Err("not ASCII"); }
 
-  let mut src_piece = Piece::new(state.turn, PAWN as u8);
-  let mut src_file  : Option<u8>    = None  ;
-  let mut src_rank  : Option<u8>    = None  ;
-  let mut capture   : bool          = false ;
-  let     dst_file  : u8            ;
-  let     dst_rank  : u8            ;
-  let mut promotion : Option<Piece> = None  ;
+  let mut bytes = short.trim_end_matches(|x| x == '+' || x == '#').as_bytes();
+  if bytes.len() < 2 { return Err("incorrect length"); }
+
+  let mut src_piece = state.turn + Pawn;
+  let mut src_file  : i8    = -1    ;
+  let mut src_rank  : i8    = -1    ;
+  let mut capture   : bool  = false ;
+  let     dst_file  : u8    ;
+  let     dst_rank  : u8    ;
+  let mut promotion : Piece = Piece::Null;
 
   //       src_file   capture  dst_rank        ignored
   //           v         v        v               v
@@ -106,123 +111,163 @@ pub fn parse_short(state : &State, short : &str) -> Result<Move, &'static str>
   //    ^            ^       ^           ^
   // src_piece  src_rank  dst_file   promotion
 
-  let mut bytes = short.trim_end_matches(|x| x == '+' || x == '#').as_bytes();
-  if bytes.len() < 2 { return Err("incorrect length"); }
-
-  if bytes == "O-O-O".as_bytes() || bytes == "0-0-0".as_bytes() {
-    bytes = match state.turn {
-      Color::White => "Ke1c1".as_bytes(),
-      Color::Black => "Ke8c8".as_bytes(),
-    };
+  if bytes == b"O-O-O" || bytes == b"0-0-0" {
+    bytes = match state.turn { White => b"Ke1c1", Black => b"Ke8c8" };
   }
-  else if bytes == "O-O".as_bytes() || bytes == "0-0".as_bytes() {
-    bytes = match state.turn {
-      Color::White => "Ke1g1".as_bytes(),
-      Color::Black => "Ke8g8".as_bytes(),
-    };
+  else if bytes == b"O-O" || bytes == b"0-0" {
+    bytes = match state.turn { White => b"Ke1g1", Black => b"Ke8g8" };
   }
 
-  let mut idx : isize = bytes.len() as isize - 1;
+  let mut len = bytes.len();
+  if len < 2 { return Err("incorrect length"); }
 
-  let c = bytes[idx as usize] as char;
-  if ['Q', 'R', 'B', 'N'].contains(&c) && bytes[idx as usize - 1] == ('=' as u8) {
+  let c = bytes[len-1];
+  if bytes[len-2] == b'=' {
     promotion = match c {
-      'Q' => Some(Piece::new(state.turn, QUEEN  as u8)),
-      'R' => Some(Piece::new(state.turn, ROOK   as u8)),
-      'B' => Some(Piece::new(state.turn, BISHOP as u8)),
-      'N' => Some(Piece::new(state.turn, KNIGHT as u8)),
-       _  => None
+      b'Q' => state.turn + Queen,
+      b'R' => state.turn + Rook,
+      b'B' => state.turn + Bishop,
+      b'N' => state.turn + Knight,
+      _  => return Err("invalid promotion")
     };
-    idx = idx - 2;
-    if idx < 1 { return Err("only specifies promotion"); }
+    len -= 2;
   }
 
-  dst_file = bytes[idx as usize - 1].wrapping_sub('a' as u8);
-  dst_rank = bytes[  idx as usize  ].wrapping_sub('1' as u8);
-  if dst_file >= 8 || dst_rank >= 8 { return Err("invalid square"); }
+  if len < 2 { return Err("missing destination"); }
+  dst_file = bytes[len-2].wrapping_sub(b'a');
+  dst_rank = bytes[len-1].wrapping_sub(b'1');
+  if dst_file >= 8 || dst_rank >= 8 { return Err("invalid destination"); }
   let dst_square = (dst_rank*8 + dst_file) as i8;
-  idx = idx - 2;
+  len -= 2;
 
-  if idx >= 0 && bytes[idx as usize] == 'x' as u8 {
-    capture = true;
-    idx = idx - 1;
-  }
-  if idx >= 0 && bytes[idx as usize].wrapping_sub('1' as u8) < 8 {
-    src_rank = Some(bytes[idx as usize] - '1' as u8);
-    idx = idx - 1;
-  }
-  if idx >= 0 && bytes[idx as usize].wrapping_sub('a' as u8) < 8 {
-    src_file = Some(bytes[idx as usize] - 'a' as u8);
-    idx = idx - 1;
-  }
-  if idx >= 0 {
-    let c = bytes[idx as usize] as char;
-    if ['K', 'Q', 'R', 'B', 'N'].contains(&c) {
-      src_piece = match c {
-        'K' => Piece::new(state.turn, KING   as u8),
-        'Q' => Piece::new(state.turn, QUEEN  as u8),
-        'R' => Piece::new(state.turn, ROOK   as u8),
-        'B' => Piece::new(state.turn, BISHOP as u8),
-        'N' => Piece::new(state.turn, KNIGHT as u8),
-         _  => src_piece
-      };
-      idx = idx - 1;
+  loop {
+    if len == 0 { break; }
+
+    if bytes[len-1] == b'x' {
+      capture = true;
+      len -= 1;
+      if len == 0 { break; }
     }
+
+    let ofs = bytes[len-1].wrapping_sub(b'1');
+    if ofs < 8 {
+      src_rank = ofs as i8;
+      len -= 1;
+      if len == 0 { break; }
+    }
+
+    let ofs = bytes[len-1].wrapping_sub(b'a');
+    if ofs < 8 {
+      src_file = ofs as i8;
+      len -= 1;
+      if len == 0 { break; }
+    }
+
+    src_piece = match bytes[len-1] {
+      b'K' => state.turn + King,
+      b'Q' => state.turn + Queen,
+      b'R' => state.turn + Rook,
+      b'B' => state.turn + Bishop,
+      b'N' => state.turn + Knight,
+      _ => return Err("invalid piece")
+    };
+    len -= 1;
+    break;
   }
-  if idx != -1 { return Err("extraneous character"); }
+  if len > 0 { return Err("incorrect length"); }
 
-  let mut early_moves = Vec::with_capacity(16);
-  let mut late_moves  = Vec::with_capacity(32);
-  state.generate_legal_moves(Selectivity::Everything, &mut early_moves, &mut late_moves);
+  let (early_moves, late_moves) = state.legal_moves(Everything);
 
-  let mut matched = NULL_MOVE;
+  let mut matched = Move::NULL;
   for mv in early_moves.into_iter().chain(late_moves.into_iter()) {
+    if mv.dst          != dst_square { continue; }
     if mv.piece        != src_piece  { continue; }
     if mv.is_capture() != capture    { continue; }
-    if mv.dst          != dst_square { continue; }
-    match promotion {
-      None => if mv.is_promotion() { continue; }
-      Some(p) => {
-        if !mv.is_promotion() { continue; }
-        if  mv.promotion != p { continue; }
-      }
+    if promotion.is_null() {
+      if mv.is_promotion() { continue; }
     }
-    if src_file.is_some() { if mv.src % 8 != (src_file.unwrap() as i8) { continue; } }
-    if src_rank.is_some() { if mv.src / 8 != (src_rank.unwrap() as i8) { continue; } }
+    else {
+      if !mv.is_promotion() { continue; }
+      if mv.promotion != promotion { continue; }
+    }
+    if src_file >= 0 { if (mv.src as u8) % 8 != src_file as u8 { continue; } }
+    if src_rank >= 0 { if (mv.src as u8) / 8 != src_rank as u8 { continue; } }
 
-    if matched.is_null() { matched = mv.clone(); }
+    if matched.is_null() { matched = mv; }
     else { return Err("multiple matches"); }
   }
   if matched.is_null() { return Err("no matches"); }
   return Ok(matched);
 }
 
-pub fn parse_universal(state : &State, either : &str) -> Result<Move, &'static str>
-{
-  if let Ok(mv) =  parse_long(state, either) { return Ok(mv); }
-  if let Ok(mv) = parse_short(state, either) { return Ok(mv); }
-  return Err("unable to parse move as long or short");
-}
+impl Move {
+  pub fn to_string(&self, state : &mut State) -> String
+  {
+    let algebraic_file = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    let algebraic_rank = ['1', '2', '3', '4', '5', '6', '7', '8'];
 
-pub fn parse_pgn(state : &State, text : &str) -> Result<Vec<Move>, &'static str>
-{
-  #[cfg(debug_assertions)] if !text.is_ascii() { return Err("not ASCII"); }
-  return parse_pgn_tokens(state, &mut text.split_ascii_whitespace());
-}
-
-pub fn parse_pgn_tokens(
-  state  : &State,
-  text   : &mut SplitAsciiWhitespace,
-) -> Result<Vec<Move>, &'static str>
-{
-  let mut working = state.clone();
-  let mut movelist : Vec<Move> = Vec::new();
-  for token in text {
-    if token.ends_with('.') { continue; }
-    if token=="1-0" || token=="0-1" || token=="1/2-1/2" || token=="*" { break; }
-    let mv = parse_short(&working, token)?;
-    working.apply(&mv);
-    movelist.push(mv);
+    if self.is_null() { return String::from("0000"); }
+    let mut buf = String::new();
+    let kind = self.piece.kind();
+    if kind == King && self.dst == self.src + 2 {
+      buf.push_str("0-0");
+    }
+    else
+    if kind == King && self.dst == self.src - 2 {
+      buf.push_str("0-0-0");
+    }
+    else {
+      if kind == Pawn {
+        if self.is_capture() {
+          buf.push(algebraic_file[self.src as usize % 8]);
+        }
+      }
+      else {
+        buf.push(kind.upper());
+        // If another piece of the same color and kind can also reach the
+        //   destination square, emit the file to disambiguate, or if the
+        //   file is shared, emit the rank. In very rare cases, we may to
+        //   emit both (consider three queens and a destination arranged
+        //   in an equilateral rectangle).
+        // TODO technically, this should ignore pieces that cannot actual
+        //   reach the destination square because they are pinned.
+        let composite = state.sides[White] | state.sides[Black];
+        let reaching = piece_destinations(kind, self.dst as usize, composite)
+                     & state.boards[self.piece];
+        if reaching.count_ones() > 1 {
+          let file = self.src as usize % 8;
+          let rank = self.src as usize / 8;
+          let file_count = (reaching & (FILE_A <<   file  )).count_ones();
+          let rank_count = (reaching & (RANK_1 << (rank*8))).count_ones();
+          if file_count < 2 {
+            buf.push(algebraic_file[file]);
+          }
+          else if rank_count < 2 {
+            buf.push(algebraic_rank[rank]);
+          }
+          else {
+            buf.push(algebraic_file[file]);
+            buf.push(algebraic_rank[rank]);
+          }
+        }
+      }
+      if self.is_capture() { buf.push('x'); }
+      buf.push_str(&self.dst.algebraic());
+      if self.is_promotion() {
+        buf.push('=');
+        buf.push(self.promotion.kind().upper());
+      }
+    }
+    if self.gives_check() {
+      let metadata = state.save();
+      state.apply(&self);
+      let (early_moves, late_moves) = state.legal_moves(Everything);
+      state.undo(&self);
+      state.restore(&metadata);
+      buf.push(
+        if early_moves.len() == 0 && late_moves.len() == 0 { '#' } else { '+' }
+      );
+    }
+    return buf;
   }
-  return Ok(movelist);
 }

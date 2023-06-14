@@ -1,11 +1,16 @@
 use std::ffi::CString;
 
-use crate::color::*;
-use crate::movegen::*;
-use crate::movetype::*;
-use crate::piece::*;
-use crate::score::*;
-use crate::state::*;
+use crate::color::Color::*;
+use crate::global::enable_syzygy;
+use crate::movegen::Selectivity::Everything;
+use crate::movetype::Move;
+use crate::piece::Piece::*;
+use crate::score::{
+  TABLEBASE_MATE,
+  TABLEBASE_LOSS,
+  PROVEN_LOSS
+};
+use crate::state::State;
 
 // This file contains the interface with the library Fathom by Ronald de Man,
 //   basil, and Jon Dart; see the directory /fathom for license information.
@@ -33,32 +38,30 @@ const TB_ENTRY_PROMOTES_SHIFT : u32 = 16;
 const TB_ENTRY_EP_SHIFT       : u32 = 19;
 const TB_ENTRY_DTZ_SHIFT      : u32 = 20;
 
-static mut TB_ENABLED : bool = false;
+pub fn disable_syzygy() { enable_syzygy(false); }
 
 pub fn initialize_syzygy(path : &str) -> bool {
   let mut status = false;
   if let Ok(cstr) = CString::new(path) {
     status = unsafe { c::tb_init(cstr.as_ptr()) };
   }
-  unsafe { TB_ENABLED = status; }
+  enable_syzygy(status);
   return status;
 }
 
-pub fn syzygy_active()  -> bool { return unsafe { TB_ENABLED };    }
-
-pub fn syzygy_support() -> u32  { return unsafe { c::TB_LARGEST }; }
+pub fn syzygy_support() -> u32 { return unsafe { c::TB_LARGEST }; }
 
 pub fn probe_syzygy_wdl(state : &State, height : i16) -> Option<i16>
 {
   let outcome : u32 = unsafe { c::tb_probe_wdl(
-    state.sides[W],
-    state.sides[B],
-    state.boards[WHITE+KING]   | state.boards[BLACK+KING]   ,
-    state.boards[WHITE+QUEEN]  | state.boards[BLACK+QUEEN]  ,
-    state.boards[WHITE+ROOK]   | state.boards[BLACK+ROOK]   ,
-    state.boards[WHITE+BISHOP] | state.boards[BLACK+BISHOP] ,
-    state.boards[WHITE+KNIGHT] | state.boards[BLACK+KNIGHT] ,
-    state.boards[WHITE+PAWN]   | state.boards[BLACK+PAWN]   ,
+    state.sides[White],
+    state.sides[Black],
+    state.boards[WhiteKing  ] | state.boards[BlackKing  ] ,
+    state.boards[WhiteQueen ] | state.boards[BlackQueen ] ,
+    state.boards[WhiteRook  ] | state.boards[BlackRook  ] ,
+    state.boards[WhiteBishop] | state.boards[BlackBishop] ,
+    state.boards[WhiteKnight] | state.boards[BlackKnight] ,
+    state.boards[WhitePawn  ] | state.boards[BlackPawn  ] ,
     state.dfz as u32,
     0,
     std::cmp::max(state.enpass, 0) as u32,
@@ -77,14 +80,14 @@ pub fn probe_syzygy_wdl(state : &State, height : i16) -> Option<i16>
 pub fn probe_syzygy_line(state : &mut State) -> Option<(i16, Vec<Move>)>
 {
   let entry : u32 = unsafe { c::tb_probe_root(
-    state.sides[W],
-    state.sides[B],
-    state.boards[WHITE+KING]   | state.boards[BLACK+KING]   ,
-    state.boards[WHITE+QUEEN]  | state.boards[BLACK+QUEEN]  ,
-    state.boards[WHITE+ROOK]   | state.boards[BLACK+ROOK]   ,
-    state.boards[WHITE+BISHOP] | state.boards[BLACK+BISHOP] ,
-    state.boards[WHITE+KNIGHT] | state.boards[BLACK+KNIGHT] ,
-    state.boards[WHITE+PAWN]   | state.boards[BLACK+PAWN]   ,
+    state.sides[White],
+    state.sides[Black],
+    state.boards[WhiteKing  ] | state.boards[BlackKing  ] ,
+    state.boards[WhiteQueen ] | state.boards[BlackQueen ] ,
+    state.boards[WhiteRook  ] | state.boards[BlackRook  ] ,
+    state.boards[WhiteBishop] | state.boards[BlackBishop] ,
+    state.boards[WhiteKnight] | state.boards[BlackKnight] ,
+    state.boards[WhitePawn  ] | state.boards[BlackPawn  ] ,
     state.dfz as u32,
     0,
     std::cmp::max(state.enpass, 0) as u32,
@@ -102,28 +105,25 @@ pub fn probe_syzygy_line(state : &mut State) -> Option<(i16, Vec<Move>)>
     TB_DRAW         => 0,
     TB_CURSED_WIN   => 0,
     TB_WIN          => TABLEBASE_MATE - dtz,
-    _               => panic!("entry wdl {:x}", wdl)
+    _               => panic!("wdl = {:08x}", wdl)
   };
 
   let src = ((entry & TB_ENTRY_FROM_MASK    ) >> TB_ENTRY_FROM_SHIFT    ) as i8;
   let dst = ((entry & TB_ENTRY_TO_MASK      ) >> TB_ENTRY_TO_SHIFT      ) as i8;
-  let pro = ((entry & TB_ENTRY_PROMOTES_MASK) >> TB_ENTRY_PROMOTES_SHIFT) as usize;
+  let pro = ((entry & TB_ENTRY_PROMOTES_MASK) >> TB_ENTRY_PROMOTES_SHIFT) as u8;
 
   // By nice coincidence, the values used to encode piece kinds in the promotion field
   //   match the values used by Expositor, and 0 is used to encode TB_PROMOTES_NONE.
 
-  let mut early_moves = Vec::with_capacity(16);
-  let mut  late_moves = Vec::with_capacity(32);
-  state.generate_legal_moves(Selectivity::Everything, &mut early_moves, &mut late_moves);
-  early_moves.append(&mut late_moves);
+  let (early_moves, late_moves) = state.legal_moves(Everything);
 
-  if early_moves.len() == 0 {
+  if early_moves.len() == 0 && late_moves.len() == 0 {
     return Some((if state.incheck { PROVEN_LOSS } else { 0 }, Vec::new()));
   }
 
   let metadata = state.save();
-  for mv in early_moves {
-    if mv.src == src && mv.dst == dst && (pro == 0 || mv.promotion.kind() == pro) {
+  for mv in early_moves.into_iter().chain(late_moves.into_iter()) {
+    if mv.src == src && mv.dst == dst && (pro == 0 || mv.promotion.kind() as u8 == pro) {
       if score == 0 {
         return Some((0, vec![mv]));
       }
@@ -141,7 +141,7 @@ pub fn probe_syzygy_line(state : &mut State) -> Option<(i16, Vec<Move>)>
     }
   }
 
-  panic!("entry src {} dst {} pro {}", src, dst, pro);
+  panic!("src = {}, dst = {}, pro = {}", src, dst, pro);
 }
 
 mod c {

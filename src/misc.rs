@@ -1,17 +1,30 @@
-use crate::color::*;
+use crate::color::Color::{self, *};
 use crate::dest::*;
-use crate::piece::*;
+use crate::global::nnue_enabled;
+use crate::piece::Kind::{self, *};
+use crate::piece::Piece;
+use crate::piece::KQRBN;
 use crate::span::*;
-use crate::state::*;
-
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+use crate::state::State;
 
 impl State {
-  pub fn evaluate_in_game(&self) -> i16
+  pub fn game_eval(&self) -> i16
   {
     if self.dfz >= 100 { return 0; }
     if let Some(score) = self.endgame() { return score; }
-    let raw = self.evaluate();
+    let raw = if nnue_enabled() { self.evaluate() } else {
+      // TODO self.evaluate_hce()
+         self.sides[  self.turn     ].count_ones() as f32
+      - (self.boards[ self.turn+Pawn].count_ones() as f32) * 0.5
+      -  self.sides[ !self.turn     ].count_ones() as f32
+      + (self.boards[!self.turn+Pawn].count_ones() as f32) * 0.5
+      + ((self.key & 255) as i8) as f32 / 256.0
+      + 0.125
+    };
+    // ↓↓↓ DEBUG ↓↓↓
+    // let check = unsafe { crate::nnue::NETWORK.evaluate(&self, self.head_index()) };
+    // if (check - raw).abs() > 0.001 { panic!("{} ~ {}", check, raw); }
+    // ↑↑↑ DEBUG ↑↑↑
     if self.dfz > 20 {
       return (raw * (112.5 - 0.625 * self.dfz as f32)).round() as i16;
     }
@@ -21,41 +34,79 @@ impl State {
   }
 }
 
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Op {
   pub square : i8,
   pub piece  : Piece,
 }
 
-pub const NOP : Op = Op { square: -1, piece: Piece::NullPiece };
-
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+pub const NOP : Op = Op { square: -1, piece: Piece::Null };
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum NodeKind {
-  Unk = 0b00,
-  All = 0b01, // upper bound (the score is this or less)
-  Cut = 0b10, // lower bound (the score is at least this)
-  PV  = 0b11, // exact score
+  Unk = 0b_00,
+  All = 0b_01,  // upper bound (the score is this or less)
+  Cut = 0b_10,  // lower bound (the score is at least this)
+  PV  = 0b_11,  // exact score
 }
 
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+pub const SQRT2 : f64 = 1.414_213_562_373_095_049;
+pub const SQRT3 : f64 = 1.732_050_807_568_877_293;
+pub const SQRT6 : f64 = 2.449_489_742_783_178_098;
 
-#[inline] pub fn hmirror(x : usize) -> usize { return x ^  7; }
-#[inline] pub fn vmirror(x : usize) -> usize { return x ^ 56; }
-#[inline] pub fn  rotate(x : usize) -> usize { return x ^ 63; }
+pub const ONE_THIRD : f64 = 0.333_333_333_333_333_333;
+pub const TWO_THIRD : f64 = 0.666_666_666_666_666_667;
 
-pub const FILE_A : u64 = 0x01_01_01_01_01_01_01_01;
-pub const FILE_H : u64 = 0x80_80_80_80_80_80_80_80;
+#[inline] pub const fn hmirror(x : usize) -> usize { return x ^  7; }
+#[inline] pub const fn vmirror(x : usize) -> usize { return x ^ 56; }
+#[inline] pub const fn  rotate(x : usize) -> usize { return x ^ 63; }
 
-pub const RANK_1 : u64 = 0x00_00_00_00_00_00_00_FF;
-pub const RANK_8 : u64 = 0xFF_00_00_00_00_00_00_00;
+pub const FILE_A : u64 = 0x_01_01_01_01_01_01_01_01;
+pub const FILE_H : u64 = 0x_80_80_80_80_80_80_80_80;
 
-pub const LIGHT_SQUARES : u64 = 0x55_aa_55_aa_55_aa_55_aa;
-pub const  DARK_SQUARES : u64 = 0xaa_55_aa_55_aa_55_aa_55;
+pub const RANK_1 : u64 = 0x_00_00_00_00_00_00_00_ff;
+pub const RANK_8 : u64 = 0x_ff_00_00_00_00_00_00_00;
+
+pub const LIGHT_SQUARES : u64 = 0x_55_aa_55_aa_55_aa_55_aa;
+pub const  DARK_SQUARES : u64 = 0x_aa_55_aa_55_aa_55_aa_55;
+
+pub const WHITE_HOME : u64 = 0x_00_00_00_00_00_00_ff_ff;
+pub const BLACK_HOME : u64 = 0x_ff_ff_00_00_00_00_00_00;
+
+pub const WHITE_SHORT_CASTLE_ROOK : u64 = 0b_1010_0000;
+pub const WHITE_SHORT_CASTLE_KING : u64 = 0b_0101_0000;
+pub const WHITE_SHORT_CASTLE_BTWN : u64 = 0b_0110_0000;
+pub const WHITE_SHORT_CASTLE_CHCK : u64 = 0b_0111_0000;
+pub const  WHITE_LONG_CASTLE_ROOK : u64 = 0b_0000_1001;
+pub const  WHITE_LONG_CASTLE_KING : u64 = 0b_0001_0100;
+pub const  WHITE_LONG_CASTLE_BTWN : u64 = 0b_0000_1110;
+pub const  WHITE_LONG_CASTLE_CHCK : u64 = 0b_0001_1100;
+
+pub const BLACK_SHORT_CASTLE_ROOK : u64 = WHITE_SHORT_CASTLE_ROOK << 56;
+pub const BLACK_SHORT_CASTLE_KING : u64 = WHITE_SHORT_CASTLE_KING << 56;
+pub const BLACK_SHORT_CASTLE_BTWN : u64 = WHITE_SHORT_CASTLE_BTWN << 56;
+pub const BLACK_SHORT_CASTLE_CHCK : u64 = WHITE_SHORT_CASTLE_CHCK << 56;
+pub const  BLACK_LONG_CASTLE_ROOK : u64 =  WHITE_LONG_CASTLE_ROOK << 56;
+pub const  BLACK_LONG_CASTLE_KING : u64 =  WHITE_LONG_CASTLE_KING << 56;
+pub const  BLACK_LONG_CASTLE_BTWN : u64 =  WHITE_LONG_CASTLE_BTWN << 56;
+pub const  BLACK_LONG_CASTLE_CHCK : u64 =  WHITE_LONG_CASTLE_CHCK << 56;
+
+#[inline]
+pub fn sweep_n(u : u64) -> u64
+{
+  let v = u | (u <<  8);
+  let w = v | (v << 16);
+  return  w | (w << 32);
+}
+
+#[inline]
+pub fn sweep_s(u : u64) -> u64
+{
+  let v = u | (u >>  8);
+  let w = v | (v >> 16);
+  return  w | (w >> 32);
+}
 
 #[inline] pub fn shift_nw(board : u64) -> u64 { return (board & !FILE_A) << 7; }
 #[inline] pub fn shift_ne(board : u64) -> u64 { return (board & !FILE_H) << 9; }
@@ -66,106 +117,73 @@ pub const  DARK_SQUARES : u64 = 0xaa_55_aa_55_aa_55_aa_55;
 pub fn pawn_attacks(color : Color, sources : u64) -> u64
 {
   return match color {
-    Color::White => shift_nw(sources) | shift_ne(sources),
-    Color::Black => shift_sw(sources) | shift_se(sources),
+    White => shift_nw(sources) | shift_ne(sources),
+    Black => shift_sw(sources) | shift_se(sources),
   };
 }
 
 #[inline]
-pub fn piece_destinations(piece : usize, src : usize, composite : u64) -> u64
+pub fn piece_destinations(kind : Kind, src : usize, composite : u64) -> u64
 {
-  return match piece {
-    KING   =>   king_destinations(           src),
-    QUEEN  =>  queen_destinations(composite, src),
-    ROOK   =>   rook_destinations(composite, src),
-    BISHOP => bishop_destinations(composite, src),
-    KNIGHT => knight_destinations(           src),
-    _      => unreachable!()
+  return match kind {
+    King   =>   king_destinations(           src),
+    Queen  =>  queen_destinations(composite, src),
+    Rook   =>   rook_destinations(composite, src),
+    Bishop => bishop_destinations(composite, src),
+    Knight => knight_destinations(           src),
+    _ => unreachable!()
   };
 }
 
 #[inline]
 pub fn crux_span(a : usize, b : usize) -> u64 // cruciform span
 {
-  return if a >= b { CRUX_SPAN[b][a] } else { CRUX_SPAN[a][b] };
-  // NOTE write this as follows instead?
-  //   return CRUX_SPAN[a][b];
-  // NOTE write this as follows instead?
-  //   let rank_a = a / 8; let file_a = a % 8;
-  //   let rank_b = b / 8; let file_b = b % 8;
-  //   if rank_a == rank_b { return (RANK_SPAN[file_a][file_b] as u64) << (a & !7); }
-  //   if file_a == file_b { return  FILE_SPAN[rank_a][rank_b]         <<  file_a;  }
-  //   return 0;
+  return unsafe { *CRUX_SPAN.get_unchecked(a).get_unchecked(b) };
 }
 
 #[inline]
 pub fn salt_span(a : usize, b : usize) -> u64 // saltire span
 {
-  return if a >= b { SALT_SPAN[b][a] } else { SALT_SPAN[a][b] };
-  // NOTE write this as follows instead?
-  //   return SALT_SPAN[a][b];
+  return unsafe { *SALT_SPAN.get_unchecked(a).get_unchecked(b) };
 }
 
 #[inline]
-pub fn any_span(a : usize, b : usize) -> u64
+pub fn line_span(a : usize, b : usize) -> u64
 {
-  return if a >= b { ANY_SPAN[b][a] } else { ANY_SPAN[a][b] };
-  // NOTE write this as follows instead?
-  //   return ANY_SPAN[a][b];
-  // NOTE write this as follows instead?
-  //   let rank_a = a / 8; let file_a = a % 8;
-  //   let rank_b = b / 8; let file_b = b % 8;
-  //   if rank_a == rank_b { return (RANK_SPAN[file_a][file_b] as u64) << (a & !7); }
-  //   if file_a == file_b { return  FILE_SPAN[rank_a][rank_b]         <<  file_a;  }
-  //   return salt_span(a, b);
+  return unsafe { *LINE_SPAN.get_unchecked(a).get_unchecked(b) };
 }
 
 #[inline]
-pub fn line_through(a : usize, b : usize) -> u64
+pub fn line_thru(a : usize, b : usize) -> u64
 {
-  return if a >= b { ANY_LINE[b][a] } else { ANY_LINE[a][b] };
-  // NOTE write this as follows instead?
-  //   return ANY_LINE[a][b];
-  // NOTE write this like crux_span? (calculating vertical and horizontal
-  //   lines rather than performing a lookup in those cases)
+  return unsafe { *LINE_THRU.get_unchecked(a).get_unchecked(b) };
 }
-
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 impl State {
   pub fn in_check(&self, color : Color) -> bool
   {
-    let kdx = color as usize * 8;
-    let king_board = self.boards[kdx];
+    let king_board = self.boards[color + King];
     let king_square = king_board.trailing_zeros() as usize;
-
-    let composite = self.sides[W] | self.sides[B];
+    let composite = self.sides[White] | self.sides[Black];
     let opp_boards = match color {
-      Color::White => &self.boards[8..15],
-      Color::Black => &self.boards[0..7]
+      White => &self.boards[8..15],
+      Black => &self.boards[0..7]
     };
-
-    let qr = opp_boards[ROOK] | opp_boards[QUEEN];
-    if qr & rook_destinations(composite, king_square) != 0 { return true; }
-
-    let qb = opp_boards[BISHOP] | opp_boards[QUEEN];
-    if qb & bishop_destinations(composite, king_square) != 0 { return true; }
-
-    if opp_boards[KNIGHT] & knight_destinations(king_square) != 0 { return true; }
-
-    if pawn_attacks(color, king_board) & opp_boards[PAWN] != 0 { return true; }
-
-    if king_destinations(king_square) & opp_boards[KING] != 0 { return true; }
-
+    let qr = opp_boards[Rook  ] | opp_boards[Queen];
+    let qb = opp_boards[Bishop] | opp_boards[Queen];
+    if      qr &   rook_destinations(composite, king_square) != 0 { return true; }
+    if      qb & bishop_destinations(composite, king_square) != 0 { return true; }
+    if opp_boards[Knight] & knight_destinations(king_square) != 0 { return true; }
+    if opp_boards[Pawn]   & pawn_attacks(color, king_board)  != 0 { return true; }
+    if opp_boards[King]   & king_destinations(king_square)   != 0 { return true; }
     return false;
   }
 
-  pub fn attacked_by(&self, color : Color, composite : u64) -> u64
+  pub fn attacks_by(&self, color : Color, composite : u64) -> u64
   {
-    let player = color as usize * 8;
     let mut attacked : u64 = 0;
-    for piece in 0..5 {
-      let mut sources = self.boards[player+piece];
+    for piece in KQRBN {
+      let mut sources = self.boards[color+piece];
       while sources != 0 {
         let src = sources.trailing_zeros() as usize;
         let destinations = piece_destinations(piece, src, composite);
@@ -173,19 +191,19 @@ impl State {
         sources &= sources - 1;
       }
     }
-    return attacked | pawn_attacks(color, self.boards[player+PAWN]);
+    return attacked | pawn_attacks(color, self.boards[color+Pawn]);
   }
 
-  pub fn attackers_of(&self, square : usize, color : Color) -> u64
+  pub fn attackers(&self, square : usize, color : Color) -> u64
   {
-    let composite = self.sides[W] | self.sides[B];
+    let composite = self.sides[White] | self.sides[Black];
     let boards = match color {
-      Color::White => &self.boards[0..7],
-      Color::Black => &self.boards[8..15]
+      White => &self.boards[0..7],
+      Black => &self.boards[8..15]
     };
-    return ((boards[ROOK]   | boards[QUEEN]) &   rook_destinations(composite, square))
-         | ((boards[BISHOP] | boards[QUEEN]) & bishop_destinations(composite, square))
-         | ( boards[KNIGHT]                  & knight_destinations(           square))
-         | ( boards[PAWN]                    &   pawn_attacks(!color, 1u64 << square));
+    return ((boards[Rook  ] | boards[Queen]) &   rook_destinations(composite, square))
+         | ((boards[Bishop] | boards[Queen]) & bishop_destinations(composite, square))
+         | ( boards[Knight]                  & knight_destinations(           square))
+         | ( boards[Pawn  ]                  &      pawn_attacks(!color, 1 << square));
   }
 }

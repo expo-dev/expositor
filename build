@@ -10,7 +10,7 @@
 # else
 #   export VERSION="$VERSION_BASE+$COMMIT_TIME"
 # fi
-export VERSION="TCEC24"
+export VERSION="TCEC25.S"
 
 BUILD_DATE=$(date +"%-d %b %Y")
 BUILD_TIME=$(date +"%H%M")

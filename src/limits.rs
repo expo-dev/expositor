@@ -1,5 +1,6 @@
-use crate::color::*;
-use crate::state::*;
+use crate::color::Color::*;
+use crate::state::State;
+use crate::misc::{ONE_THIRD, TWO_THIRD};
 
 #[derive(Clone)]
 pub struct SearchParams {
@@ -58,18 +59,18 @@ impl SearchParams {
     }
 
     // Mode 2. Time control  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-    //   See https://www.desmos.com/calculator/olv4i9y3rj, which incidental is not so different
-    //   from Stockfish's time control: https://www.desmos.com/calculator/jm26qglpzc.
+    //   See https://www.desmos.com/calculator/olv4i9y3rj, which incidentally is not so
+    //   different from Stockfish's time control: https://www.desmos.com/calculator/jm26qglpzc.
 
     let mut clock : Option<f64> = None;
     let mut increment : f64 = 0.0;
 
     match state.turn {
-      Color::White => {
+      White => {
         if let Some(clk) = self.wtime { clock     = Some(clk as f64 * 0.001); }
         if let Some(inc) = self.winc  { increment =      inc as f64 * 0.001 ; }
       }
-      Color::Black => {
+      Black => {
         if let Some(clk) = self.btime { clock     = Some(clk as f64 * 0.001); }
         if let Some(inc) = self.binc  { increment =      inc as f64 * 0.001 ; }
       }
@@ -100,9 +101,6 @@ impl SearchParams {
         let ply_remaining = linear_model(state);
         moves_remaining = (ply_remaining * 0.5).max(if no_increment { 24.0 } else { 12.0 });
       }
-
-      const ONE_THIRD : f64 = 0.333_333_333_333_333_333;
-      const TWO_THIRD : f64 = 0.666_666_666_666_666_667;
 
       let base;
       if no_increment {
@@ -136,8 +134,8 @@ impl SearchParams {
 fn linear_model(state : &State) -> f64
 {
   // Fit from TCEC games from Season 19 onward that were all at least 30 moves
-  //   long and less than 121 moves long.
-  // The coefficient of determination for the regression is about 0·48 and the
+  //   long and at most 120 moves long.
+  // The coefficient of determination for the regression was about 0·48 and the
   //   mean absolute deviation was about 27 ply.
   let ply = state.ply as f64;
   let men = (state.sides[0] | state.sides[1]).count_ones() as f64 - 2.0;

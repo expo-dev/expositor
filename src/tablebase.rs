@@ -1,11 +1,17 @@
-use crate::color::*;
+use crate::color::Color::*;
 use crate::dest::*;
-use crate::misc::*;
-use crate::movegen::*;
-use crate::movetype::*;
-use crate::piece::*;
-use crate::score::*;
-use crate::state::*;
+use crate::misc::{
+  piece_destinations,
+  pawn_attacks,
+  vmirror,
+  hmirror
+};
+use crate::movegen::Selectivity::Everything;
+use crate::movetype::Move;
+use crate::piece::Kind::*;
+use crate::piece::Piece::*;
+use crate::score::{PROVEN_MATE, PROVEN_LOSS};
+use crate::state::State;
 
 use std::mem::MaybeUninit;
 
@@ -121,6 +127,8 @@ use std::mem::MaybeUninit;
 
 pub type MiniSubtable  = [[[[u8; 2]; 64]; 64]; 32];
 pub type MiniTablebase = [MiniSubtable; 5];
+
+#[allow(non_upper_case_globals)]
 pub static mut MiniTb : MaybeUninit<MiniTablebase> = MaybeUninit::uninit();
 
 // Each tablebase entry is one byte layed out like so:
@@ -153,7 +161,7 @@ fn build_3man_subtable(x : usize) {
   let tb = unsafe { MiniTb.assume_init_mut() };
   // This is unsavory, but we really do need references (one of them mutable)
   //   to two different elements of the table.
-  let subtable : &mut MiniSubtable = unsafe { &mut *(tb.get_unchecked_mut(x) as *mut _)};
+  let subtable : &mut MiniSubtable = unsafe { &mut *(tb.get_unchecked_mut(x) as *mut _) };
 
   // First we go through and mark whether each position is legal. For a position
   //   to be legal, pawns can't be on the last rank, pieces can't be on top of
@@ -169,10 +177,11 @@ fn build_3man_subtable(x : usize) {
         loop {
           if x == 4 {
             if aps >= 56 { break; }
-            if pawn_attacks(Color::White, 1 << aps) & (1 << dks) != 0 { break; }
+            if pawn_attacks(White, 1 << aps) & (1 << dks) != 0 { break; }
           }
           else {
-            if piece_destinations(x+1, aps, composite) & (1 << dks) != 0 { break; }
+            let kind = unsafe { std::mem::transmute((x+1) as u8) };
+            if piece_destinations(kind, aps, composite) & (1 << dks) != 0 { break; }
           }
           if king_destinations(aks) & (1 << dks) != 0 { break; }
           subtable[akx][aps][dks][0] = 0x40; // drawn by default
@@ -202,10 +211,11 @@ fn build_3man_subtable(x : usize) {
             // Stalemates are just draws, so we don't bother testing for them;
             //   we only consider checkmates (the king must be in check).
             if x == 4 {
-              if pawn_attacks(Color::White, 1 << aps) & (1 << dks) == 0 { break; }
+              if pawn_attacks(White, 1 << aps) & (1 << dks) == 0 { break; }
             }
             else {
-              if piece_destinations(x+1, aps, composite) & (1 << dks) == 0 { break; }
+              let kind = unsafe { std::mem::transmute((x+1) as u8) };
+              if piece_destinations(kind, aps, composite) & (1 << dks) == 0 { break; }
             }
 
             // If you can safely take the piece, it's not mate. (We can view
@@ -287,7 +297,8 @@ fn build_3man_subtable(x : usize) {
           }
           // Piece moves
           else {
-            let mut dests = piece_destinations(x+1, aps, composite);
+            let kind = unsafe { std::mem::transmute((x+1) as u8) };
+            let mut dests = piece_destinations(kind, aps, composite);
             while dests != 0 {
               let dst = dests.trailing_zeros() as usize;
               let entry = subtable[akx][dst][dks][1];
@@ -307,6 +318,10 @@ fn build_3man_subtable(x : usize) {
         } // dks
       } // aps
     } // akx
+
+    if !modified { break; }
+
+    let mut modified = false;
 
     // On even ply we find positions where the side without the piece cannot
     //   prevent mate. The side without the piece gets to pick a draw if one
@@ -350,7 +365,7 @@ fn build_3man_subtable(x : usize) {
 }
 
 pub fn build_3man() {
-  // It's important that we build the pawn subtable last
+  // It's important that we build the pawn subtable last.
   for x in 0..5 { build_3man_subtable(x); }
 }
 
@@ -358,19 +373,17 @@ pub fn probe_3man(state : &State, height : i16) -> i16 {
   // NOTE that this should only be called once we've
   //   checked there are in fact three men on the board.
 
-  let black_winning = state.sides[W].count_ones() == 1;
+  let winning = if state.sides[White].count_ones() == 1 { Black } else { White};
 
-  let white_king = state.boards[WHITE+KING].trailing_zeros() as usize;
-  let black_king = state.boards[BLACK+KING].trailing_zeros() as usize;
-  let mut atk_king = if black_winning { black_king } else { white_king };
-  let mut def_king = if black_winning { white_king } else { black_king };
+  let mut atk_king = state.boards[ winning+King].trailing_zeros() as usize;
+  let mut def_king = state.boards[!winning+King].trailing_zeros() as usize;
 
-  let composite = state.sides[W] | state.sides[B];
-  let piece_board = composite ^ (state.boards[WHITE+KING] | state.boards[BLACK+KING]);
+  let composite = state.sides[White] | state.sides[Black];
+  let piece_board = composite ^ (state.boards[WhiteKing] | state.boards[BlackKing]);
   let mut atk_piece = piece_board.trailing_zeros() as usize;
 
   let piece_type = state.squares[atk_piece].kind();
-  let atk_to_move = (state.turn as usize) ^ (black_winning as usize);
+  let atk_to_move = (state.turn != winning) as usize;
 
   if atk_king % 8 >= 4 {
     atk_king  = hmirror(atk_king);
@@ -380,7 +393,7 @@ pub fn probe_3man(state : &State, height : i16) -> i16 {
 
   // Within the 3-man tablebase, pawns always move upward,
   //   so we flip vertically when black has the pawn.
-  if black_winning {
+  if winning == Black {
     atk_king  = vmirror(atk_king);
     atk_piece = vmirror(atk_piece);
     def_king  = vmirror(def_king);
@@ -389,7 +402,7 @@ pub fn probe_3man(state : &State, height : i16) -> i16 {
   atk_king = sq2idx(atk_king);
 
   let tb = unsafe { MiniTb.assume_init_mut() };
-  let subtable : &mut MiniSubtable = &mut tb[piece_type-1];
+  let subtable : &mut MiniSubtable = &mut tb[piece_type as usize - 1];
   let entry = subtable[atk_king][atk_piece][def_king][atk_to_move];
   let dtm = (entry & 0x3F) as i16;
   return match entry >> 6 {
@@ -404,18 +417,15 @@ pub fn probe_3man(state : &State, height : i16) -> i16 {
 
 pub fn probe_tb_line(state : &mut State) -> (i16, Vec<Move>)
 {
-  let mut early_moves = Vec::with_capacity(16);
-  let mut  late_moves = Vec::with_capacity(32);
-  state.generate_legal_moves(Selectivity::Everything, &mut early_moves, &mut late_moves);
-  early_moves.append(&mut late_moves);
+  let (early_moves, late_moves) = state.legal_moves(Everything);
 
   let mut best_score = i16::MIN;
-  let mut best_move = NULL_MOVE;
+  let mut best_move = Move::NULL;
 
   let metadata = state.save();
-  for mv in early_moves {
+  for mv in early_moves.into_iter().chain(late_moves.into_iter()) {
     state.apply(&mv);
-    let men = (state.sides[W] | state.sides[B]).count_ones();
+    let men = (state.sides[White] | state.sides[Black]).count_ones();
     let score = match men {
       2 => 0,
       3 => -probe_3man(state, 1),

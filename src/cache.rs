@@ -1,8 +1,7 @@
-use crate::misc::*;
+use crate::misc::NodeKind;
+use crate::global::{GLOB, index_mask, set_index_mask};
 
 use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
-
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 // This struct is layed out like so:
 //
@@ -31,63 +30,53 @@ fn quick_nonkey(a : &TableEntry) -> u64
   return unsafe { *(ptr as *const u64) };
 }
 
-pub const NULL_ENTRY : TableEntry = TableEntry {
-  key:        0,
-  generation: 0,
-  hint_move:  0,
-  hint_score: 0,
-  depth:      0,
-  kind:       NodeKind::Unk,
-};
-
-static mut CACHE : Vec<TableEntry> = Vec::new();
-static mut INDEX_MASK : usize = 0;
+impl TableEntry {
+  pub const NULL : TableEntry = TableEntry {
+    key:        0,
+    generation: 0,
+    hint_move:  0,
+    hint_score: 0,
+    depth:      0,
+    kind:       NodeKind::Unk,
+  };
+}
 
 pub fn initialize_cache(size : usize)
 {
   // The minimum transposition table size is 64 kilobytes (4096 entries)
-  let mut size = std::cmp::max(size, 65536) / 16;
+  let mut size = std::cmp::max(size, 65_536) / 16;
   let mut log2 = 0;
   loop { size >>= 1; if size == 0 { break; } log2 += 1; }
-  let size = 1usize << log2;
+  let size : usize = 1 << log2;
   unsafe {
     // We replace the cache instead of calling clear so
     //   that the allocation size is actually decreased
-    CACHE = Vec::with_capacity(size);
-    for _ in 0..size { CACHE.push(NULL_ENTRY); }
-    INDEX_MASK = size - 1;
+    GLOB.cache = Vec::with_capacity(size);
+    for _ in 0..size { GLOB.cache.push(TableEntry::NULL); }
   }
+  set_index_mask(size - 1);
 }
 
-#[inline]
 pub fn table_prefetch(key : u64)
 {
-  unsafe {
-    let index = key as usize & INDEX_MASK;
-    _mm_prefetch(&CACHE[index] as *const TableEntry as *const i8, _MM_HINT_T0);
-  }
+  let index = key as usize & index_mask();
+  unsafe { _mm_prefetch(&GLOB.cache[index] as *const TableEntry as *const i8, _MM_HINT_T0); }
 }
 
-#[inline]
 pub fn table_lookup(key : u64) -> TableEntry
 {
-  unsafe {
-    let index = key as usize & INDEX_MASK;
-    let entry = CACHE[index].clone();
-    let deciphered = entry.key ^ quick_nonkey(&entry);
-    return if deciphered == key { entry } else { NULL_ENTRY };
-  }
+  let index = key as usize & index_mask();
+  let entry = unsafe { GLOB.cache[index].clone() };
+  let deciphered = entry.key ^ quick_nonkey(&entry);
+  return if deciphered == key { entry } else { TableEntry::NULL };
 }
 
-#[inline]
 pub fn table_update(mut update : TableEntry)
 {
-  unsafe {
-    let index = update.key as usize & INDEX_MASK;
-    let preexisting = &mut CACHE[index];
-    if update.generation != preexisting.generation
-      || update.depth > preexisting.depth
-      || (update.depth == preexisting.depth && update.kind as u8 >= preexisting.kind as u8)
-    { update.key ^= quick_nonkey(&update); *preexisting = update; }
-  }
+  let index = update.key as usize & index_mask();
+  let preexisting = unsafe { &mut GLOB.cache[index] };
+  if update.generation != preexisting.generation
+    || update.depth > preexisting.depth
+    || (update.depth == preexisting.depth && update.kind as u8 >= preexisting.kind as u8)
+  { update.key ^= quick_nonkey(&update); *preexisting = update; }
 }

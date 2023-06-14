@@ -1,12 +1,12 @@
-use crate::constants::*;
-use crate::context::*;
-use crate::misc::*;
-use crate::movegen::*;
-use crate::movesel::*;
-use crate::movetype::*;
-use crate::piece::*;
-use crate::score::*;
-use crate::state::*;
+use crate::constants::{DELTA_SCALE, DELTA_MARGIN};
+use crate::context::Context;
+use crate::misc::Op;
+use crate::movegen::Selectivity;
+use crate::movesel::MoveSelector;
+use crate::movetype::{Move, fast_eq};
+use crate::piece::Piece::Null;
+use crate::score::{PROVEN_MATE, PROVEN_LOSS, INEVITABLE_MATE, format_score};
+use crate::state::State;
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
@@ -17,19 +17,18 @@ pub fn resolving_search(
   alpha      : i16,
   beta       : i16,
   context    : &mut Context,
-  statistics : &mut Statistics,
 ) -> i16
 {
   if state.dfz > 100 { return 0; }
 
-  statistics.r_nodes_at_length[length as usize] += 1;
-  statistics.r_nodes_at_height[height as usize] += 1;
+  context.r_nodes_at_length[length as usize] += 1;
+  context.r_nodes_at_height[height as usize] += 1;
 
   let worst_possible = PROVEN_LOSS + (height as i16);
   let  best_possible = PROVEN_MATE - (height as i16 + 1);
 
   // You can't stand pat if you're in check
-  let static_eval = if state.incheck { worst_possible } else { state.evaluate_in_game() };
+  let static_eval = if state.incheck { worst_possible } else { state.game_eval() };
   let mut estimate = static_eval;
 
   let mut alpha = std::cmp::max(estimate, alpha);
@@ -55,7 +54,7 @@ pub fn resolving_search(
       Selectivity::ActiveOnly
     };
 
-  let mut selector = MoveSelector::new(selectivity, height, NULL_MOVE);
+  let mut selector = MoveSelector::new(selectivity, height, Move::NULL);
   let metadata = state.save();
   let mut successors = 0;
   while let Some(mv) = selector.next(state, context) {
@@ -65,6 +64,10 @@ pub fn resolving_search(
     //   check, even if static exchange analysis predicts it is losing
     if !state.incheck && !mv.is_unusual() && !mv.gives_discovered_check() {
       if mv.is_capture() {
+        // Ignore losing captures and, as we move away from the leaf,
+        //   start ignoring merely neutral captures as well
+        let threshold = if length < 2 || mv.gives_check() { 0 } else { 1 };
+        if mv.score < threshold { continue; }
         // Delta pruning
         //   We disable delta pruning when the score is near mate because the
         //   assumptions of delta pruning no longer hold. In a KR v K endgame,
@@ -77,15 +80,11 @@ pub fn resolving_search(
           let gain = (mv.score as i32 * 10 * DELTA_SCALE) / 4096 + DELTA_MARGIN;
           if static_eval + (gain as i16) < alpha { continue; }
         }
-        // Ignore losing captures and, as we move away from the leaf,
-        //   start ignoring merely neutral captures as well
-        let threshold = if length < 2 || mv.gives_check() { 0 } else { 1 };
-        if mv.score < threshold { continue; }
       }
       else {
         let prediction = state.analyze_exchange(
           Op {square: mv.src, piece: mv.piece},
-          Op {square: mv.dst, piece: Piece::NullPiece}
+          Op {square: mv.dst, piece: Null}
         );
         if prediction < 0 { continue; }
       }
@@ -94,7 +93,7 @@ pub fn resolving_search(
     context.gainful[length as usize] = mv.is_gainful() || state.incheck;
     state.apply(&mv);
     let score =
-      -resolving_search(state, length+1, height+1, -beta, -alpha, context, statistics);
+      -resolving_search(state, length+1, height+1, -beta, -alpha, context);
     state.undo(&mv);
     state.restore(&metadata);
 
@@ -103,7 +102,7 @@ pub fn resolving_search(
     if alpha >= beta {
       if !mv.is_gainful() {
         let killers = &mut context.killer_table[height as usize];
-        if !quick_eq(&mv, &killers.0) {
+        if !fast_eq(&mv, &killers.0) {
           killers.1 = (killers.0).clone();
           killers.0 = mv;
         }
@@ -114,7 +113,7 @@ pub fn resolving_search(
 
   // When there are no active/gainful successors and we're in check, this is actually mate!
   //   since every move counts as active/gainful when you are in check.
-  if successors == 0 && state.incheck { return PROVEN_LOSS + (height as i16); }
+  if successors == 0 && state.incheck { return PROVEN_LOSS + height as i16; }
   else if state.dfz == 100 { return 0; }
   else { return estimate; }
 }
@@ -122,28 +121,36 @@ pub fn resolving_search(
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 // This is identical to resolving_search but prints the search tree as it goes
 
-fn indent(tab : u8) { for _ in 0..tab { eprint!("\x1B[2m│\x1B[22m  "); } }
+fn      indent(tab : u8) {           for _ in 0..tab { eprint!("\x1B[2m│\x1B[22m  "); } }
 fn last_indent(tab : u8) { if tab > 0 { indent(tab-1); eprint!("\x1B[2m└\x1B[22m  "); } }
 
 pub fn debug_resolving_search(
-  state      : &mut State,
-  length     : u8,
-  height     : u8,
-  alpha      : i16,
-  beta       : i16,
-  context    : &mut Context,
+  state   : &mut State,
+  length  : u8,
+  height  : u8,
+  alpha   : i16,
+  beta    : i16,
+  context : &mut Context,
 ) -> i16
 {
+  let worst_possible = PROVEN_LOSS + (height as i16);
+  let  best_possible = PROVEN_MATE - (height as i16 + 1);
+
   let static_eval =
-    if state.incheck { i16::MIN + 1 } else { (state.evaluate() * 100.0).round() as i16 };
+    if state.incheck { worst_possible } else { (state.evaluate() * 100.0).round() as i16 };
   let mut estimate = static_eval;
 
-  if estimate >= beta {
-    last_indent(height); eprintln!("cutoff est {} >= beta {}", estimate, beta);
-    return estimate;
-  }
+  indent(height+1);
+  eprintln!("static {}", format_score(estimate));
 
   let mut alpha = std::cmp::max(estimate, alpha);
+  let beta = std::cmp::min(best_possible, beta);
+
+  if alpha >= beta {
+    last_indent(height+1);
+    eprintln!("cutoff alpha {} >= beta {}", format_score(alpha), format_score(beta));
+    return alpha;
+  }
 
   let selectivity =
     if length >= 4 {
@@ -156,7 +163,7 @@ pub fn debug_resolving_search(
       Selectivity::ActiveOnly
     };
 
-  let mut selector = MoveSelector::new(selectivity, height, NULL_MOVE);
+  let mut selector = MoveSelector::new(selectivity, height, Move::NULL);
   let metadata = state.save();
   let mut successors = 0;
   while let Some(mv) = selector.next(state, context) {
@@ -164,32 +171,39 @@ pub fn debug_resolving_search(
 
     if !state.incheck && !mv.is_unusual() && !mv.gives_discovered_check() {
       if mv.is_capture() {
+        let threshold = if length < 2 || mv.gives_check() { 0 } else { 1 };
+        if mv.score < threshold {
+          indent(height+1);
+          eprintln!("{} skipped \x1B[2m{} < {}\x1B[22m", mv, mv.score, threshold);
+          continue;
+        }
         if !mv.gives_check() && estimate.abs() < INEVITABLE_MATE {
           let gain = (mv.score as i32 * 10 * DELTA_SCALE) / 4096 + DELTA_MARGIN;
           if static_eval + (gain as i16) < alpha {
-            indent(height); eprintln!("{} delta \x1B[2m{} < {}\x1B[22m", mv, static_eval + (mv.score as i16 * 10) + 150, alpha);
+            indent(height+1);
+            eprintln!(
+              "{} delta \x1B[2m{} < {}\x1B[22m",
+              mv, format_score(static_eval + (gain as i16)), format_score(alpha)
+            );
             continue;
           }
-        }
-        let threshold = if length < 2 || mv.gives_check() { 0 } else { 1 };
-        if mv.score < threshold {
-          indent(height); eprintln!("{} skipped \x1B[2m{} < {}\x1B[22m", mv, mv.score, threshold);
-          continue;
         }
       }
       else {
         let prediction = state.analyze_exchange(
           Op {square: mv.src, piece: mv.piece},
-          Op {square: mv.dst, piece: Piece::NullPiece}
+          Op {square: mv.dst, piece: Null}
         );
         if prediction < 0 {
-          indent(height); eprintln!("{} skipped \x1B[2m{} < 0\x1B[22m", mv, prediction);
+          indent(height+1);
+          eprintln!("{} skipped \x1B[2m{} < 0\x1B[22m", mv, prediction);
           continue;
         }
       }
     }
 
-    indent(height); eprintln!("{} \x1B[2m{}\x1B[22m", mv, mv.score);
+    indent(height+1);
+    eprintln!("{} \x1B[2m{}\x1B[22m", mv, mv.score);
 
     context.gainful[length as usize] = mv.is_gainful() || state.incheck;
     state.apply(&mv);
@@ -201,10 +215,11 @@ pub fn debug_resolving_search(
     estimate = std::cmp::max(estimate, score);
     alpha    = std::cmp::max(alpha,    score);
     if alpha >= beta {
-      indent(height); eprintln!("cutoff alpha {} >= beta {}", alpha, beta);
+      indent(height+1);
+      eprintln!("cutoff alpha {} >= beta {}", format_score(alpha), format_score(beta));
       if !mv.is_gainful() {
         let killers = &mut context.killer_table[height as usize];
-        if !quick_eq(&mv, &killers.0) {
+        if !fast_eq(&mv, &killers.0) {
           killers.1 = (killers.0).clone();
           killers.0 = mv;
         }
@@ -214,35 +229,43 @@ pub fn debug_resolving_search(
   }
 
   if successors == 0 && state.incheck {
-    last_indent(height); eprintln!("mate {}", height);
-    return PROVEN_LOSS + height as i16;
+    last_indent(height+1);
+    let mate = PROVEN_LOSS + height as i16;
+    eprintln!("mate {}", format_score(mate));
+    return mate;
   }
 
-  last_indent(height); eprintln!("= {}", estimate);
+  last_indent(height+1);
+  eprintln!("return {}", format_score(estimate));
   return estimate;
 }
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-// This is identical to resolving_search but prints the FEN of the leaves
+// This is identical to resolving_search but collects the leaves
 
 pub fn resolving_search_leaves(
-  state      : &mut State,
-  length     : u8,
-  height     : u8,
-  alpha      : i16,
-  beta       : i16,
-  context    : &mut Context,
+  state   : &mut State,
+  length  : u8,
+  height  : u8,
+  alpha   : i16,
+  beta    : i16,
+  context : &mut Context,
+  leaves  : &mut Vec<(State, i16)>
 ) -> i16
 {
   let mut leaf = !state.incheck;
 
+  let worst_possible = PROVEN_LOSS + (height as i16);
+  let  best_possible = PROVEN_MATE - (height as i16 + 1);
+
   let static_eval =
-    if state.incheck { i16::MIN + 1 } else { (state.evaluate() * 100.0).round() as i16 };
+    if state.incheck { worst_possible } else { (state.evaluate() * 100.0).round() as i16 };
   let mut estimate = static_eval;
 
-  if estimate >= beta { return estimate; }
-
   let mut alpha = std::cmp::max(estimate, alpha);
+  let beta = std::cmp::min(best_possible, beta);
+
+  if alpha >= beta { return alpha; }
 
   let selectivity =
     if length >= 4 {
@@ -255,7 +278,7 @@ pub fn resolving_search_leaves(
       Selectivity::ActiveOnly
     };
 
-  let mut selector = MoveSelector::new(selectivity, height, NULL_MOVE);
+  let mut selector = MoveSelector::new(selectivity, height, Move::NULL);
   let metadata = state.save();
   let mut successors = 0;
   while let Some(mv) = selector.next(state, context) {
@@ -263,17 +286,17 @@ pub fn resolving_search_leaves(
 
     if !state.incheck && !mv.is_unusual() && !mv.gives_discovered_check() {
       if mv.is_capture() {
+        let threshold = if length < 2 || mv.gives_check() { 0 } else { 1 };
+        if mv.score < threshold { continue; }
         if !mv.gives_check() && estimate.abs() < INEVITABLE_MATE {
           let gain = (mv.score as i32 * 10 * DELTA_SCALE) / 4096 + DELTA_MARGIN;
           if static_eval + (gain as i16) < alpha { continue; }
         }
-        let threshold = if length < 2 || mv.gives_check() { 0 } else { 1 };
-        if mv.score < threshold { continue; }
       }
       else {
         let prediction = state.analyze_exchange(
           Op {square: mv.src, piece: mv.piece},
-          Op {square: mv.dst, piece: Piece::NullPiece}
+          Op {square: mv.dst, piece: Null}
         );
         if prediction < 0 { continue; }
       }
@@ -282,7 +305,7 @@ pub fn resolving_search_leaves(
     context.gainful[length as usize] = mv.is_gainful() || state.incheck;
     state.apply(&mv);
     let score =
-      -resolving_search_leaves(state, length+1, height+1, -beta, -alpha, context);
+      -resolving_search_leaves(state, length+1, height+1, -beta, -alpha, context, leaves);
     state.undo(&mv);
     state.restore(&metadata);
 
@@ -293,7 +316,7 @@ pub fn resolving_search_leaves(
     if alpha >= beta {
       if !mv.is_gainful() {
         let killers = &mut context.killer_table[height as usize];
-        if !quick_eq(&mv, &killers.0) {
+        if !fast_eq(&mv, &killers.0) {
           killers.1 = (killers.0).clone();
           killers.0 = mv;
         }
@@ -303,8 +326,7 @@ pub fn resolving_search_leaves(
   }
 
   if successors == 0 && state.incheck { return PROVEN_LOSS + height as i16; }
-
   if estimate < alpha { leaf = false; }
-  if leaf { println!("{}", state.to_fen()); }
+  if leaf { leaves.push((state.clone_truncated(), estimate)); }
   return estimate;
 }

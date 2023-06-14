@@ -1,18 +1,20 @@
 use crate::basis::*;
-use crate::color::*;
-use crate::state::*;
+use crate::color::Color::*;
+use crate::color::WB;
+use crate::state::State;
+use crate::piece::KQRBNP;
 
 impl State {
   pub fn zobrist(&self) -> u64
   {
-    let mut key = if self.turn == Color::White { 0 } else { TURN_BASIS };
-    for color in 0..2 {
-      for index in 0..6 {
-        let piece = color*8 + index;
+    let mut key = match self.turn { White => 0, Black => TURN_BASIS };
+    for color in WB {
+      for kind in KQRBNP {
+        let piece = color + kind;
         let mut board = self.boards[piece];
         while board != 0 {
           let square = board.trailing_zeros() as usize;
-          let entry = PIECE_BASIS[piece*64 + square];
+          let entry = PIECE_BASIS[(piece as usize)*64 + square];
           key ^= entry;
           board &= board - 1;
         }
