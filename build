@@ -16,5 +16,4 @@ BUILD_DATE=$(date +"%-d %b %Y")
 BUILD_TIME=$(date +"%H%M")
 export BUILD="$BUILD_TIME on $BUILD_DATE"
 
-RUSTFLAGS='-C target-cpu=native' cargo build
 RUSTFLAGS='-C target-cpu=native' cargo build --release
