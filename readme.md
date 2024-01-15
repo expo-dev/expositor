@@ -125,23 +125,23 @@ be entered directly (which will be applied to the current position).
 When stderr is a terminal, Expositor will display formatted information
 (via stderr) in addition to UCI output (via stdout).
 
-<p align="center"><img src="pic/go.png" style="width: 16em;"></p>
+<p align="center"><img src="pic/go.png" style="width: 32em;"></p>
 
 There are other commands that might be helpful when using Expositor
 interactively in a terminal. The `show` command will have her display the
 current position:
 
-<p align="center"><img src="pic/show.png" style="width: 16em;"></p>
+<p align="center"><img src="pic/show.png" style="width: 32em;"></p>
 
 The `eval` command will have her print her current static evaluation and
 derived piece values:
 
-<p align="center"><img src="pic/eval.png" style="width: 16em;"></p>
+<p align="center"><img src="pic/eval.png" style="width: 32em;"></p>
 
 The `resolve` command will have her display a quiescing search from the
 current position:
 
-<p align="center"><img src="pic/resolve.png" style="width: 16em;"></p>
+<p align="center"><img src="pic/resolve.png" style="width: 32em;"></p>
 
 For more information, see the **Usage** section of this readme, pass any command
 line argument to Expositor, or use the `help` command when Expositor is running.
@@ -343,7 +343,7 @@ nodes on the left are the same nodes as on the right).
 - Other colored lines indicate weights, which numbers on the left are multiplied
 by to produce linearly scaled numbers on the right.
 
-<p align="center"><img src="pic/nnue-basic.gif" style="width: 16em;"></p>
+<p align="center"><img src="pic/nnue-basic.gif" style="width: 32em;"></p>
 
 In practice, however, the structure on the bottom of the animation is what would
 be implemented – the result is identical.
@@ -367,12 +367,12 @@ For the sake of space, the animation depicts a network with four king regions,
 rather than five. The four sets of colors from green to blue correspond to the
 four king regions.
 
-<p align="center"><img src="pic/nnue-4kr-std-1.gif" style="width: 16em;"></p>
+<p align="center"><img src="pic/nnue-4kr-std-1.gif" style="width: 32em;"></p>
 
 Here is another animation of the same network with a slightly different
 depiction:
 
-<p align="center"><img src="pic/nnue-4kr-std-2.gif" style="width: 16em;"></p>
+<p align="center"><img src="pic/nnue-4kr-std-2.gif" style="width: 32em;"></p>
 
 In Expositor’s current network, the location of the white king is used to
 select the weights used to evaluate both white and black’s position from white’s
@@ -384,7 +384,7 @@ black’s position from white’s perspective is different than evaluating black
 position from black’s perspective, even if both are predicated on the position
 of black’s king!) Here is animation of such a network:
 
-<p align="center"><img src="pic/nnue-4kr-alt.gif" style="width: 16em;"></p>
+<p align="center"><img src="pic/nnue-4kr-alt.gif" style="width: 32em;"></p>
 
 Pay close attention to the green–blue colors. In the network used by Expositor,
 the incoming weights connected to the circular nodes are the same color whether
