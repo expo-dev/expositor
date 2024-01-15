@@ -91,7 +91,7 @@ impl Rand for u64 {
 
   fn rand() -> Self
   {
-    return u64::rand_with(unsafe { &mut RNG_STATE });
+    return u64::rand_with(unsafe { &mut *std::ptr::addr_of_mut!(RNG_STATE) });
   }
 }
 
@@ -103,7 +103,7 @@ impl Rand for u32 {
 
   fn rand() -> Self
   {
-    return u32::rand_with(unsafe { &mut RNG_STATE });
+    return u32::rand_with(unsafe { &mut *std::ptr::addr_of_mut!(RNG_STATE) });
   }
 }
 

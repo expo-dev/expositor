@@ -1,7 +1,7 @@
 use crate::color::Color::{self, *};
 use crate::misc::vmirror;
 use crate::movegen::Selectivity::Everything;
-use crate::nnue::{HEADS, Network};
+use crate::nnue::{HEADS, NETWORK};
 use crate::piece::Kind::King;
 use crate::piece::Piece;
 use crate::policy::{PolicyNetwork, PolicyBuffer};
@@ -56,11 +56,11 @@ pub fn show(state : &State, perspective : Color)
   eprintln!("\x1B[2m{} to move  {:5} dfz\x1B[22m", state.turn, state.dfz);
 }
 
-pub fn derived(state : &State, network : &Network)
+pub fn derived(state : &State)
 {
   let mut state = state.clone_empty();
   let head_idx = state.head_index();
-  let base = network.evaluate(&state, head_idx);
+  let base = unsafe { NETWORK.evaluate(&state, head_idx) };
   let base = match state.turn { White => base, Black => -base };
 
   eprint!("\x1B[0m");
@@ -89,7 +89,7 @@ pub fn derived(state : &State, network : &Network)
         }
         else {
           state.boards[piece] ^= 1 << square;
-          let hyp = network.evaluate(&state, head_idx);
+          let hyp = unsafe { NETWORK.evaluate(&state, head_idx) };
           let diff = match state.turn {
             White => base - hyp,
             Black => base + hyp
@@ -110,7 +110,7 @@ pub fn derived(state : &State, network : &Network)
   eprintln!("NNUE evaluation {:+7.3}\x1B[44G{} to move", base, state.turn);
   eprint!("\x1B[2m");
   for h in 0..HEADS {
-    eprint!("hd {} evaluation {:+7.3}", h, network.evaluate(&state, h));
+    eprint!("hd {} evaluation {:+7.3}", h, unsafe { NETWORK.evaluate(&state, h) });
     if h == head_idx { eprintln!(" <-"); } else { eprintln!(); }
   }
   eprint!("\x1B[0m");

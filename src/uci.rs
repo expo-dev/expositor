@@ -529,7 +529,7 @@ pub fn uci() -> std::io::Result<()>
       // NNUE  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
       "eval" => {
-        if  isatty(STDERR) { derived(&root, unsafe { &NETWORK }); }
+        if  isatty(STDERR) { derived(&root); }
         if !isatty(STDOUT) { println!("{}", (root.evaluate() * 100.0).round() as i16); }
       }
 

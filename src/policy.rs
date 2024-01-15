@@ -728,7 +728,7 @@ pub fn train_policy(path : &str) -> std::io::Result<()>
           let mut index = id;
           for _ in 0..batch_per_epoch {
             ds.reset();
-            let ps = unsafe { &PARAMS };
+            let ps = unsafe { & *std::ptr::addr_of!(PARAMS) };
             let mut total_num = 0;
             for _ in 0..batch_size_per_thread {
               let (mini, ofs, num) = unsafe { &DATASET_POSNS[index] };
