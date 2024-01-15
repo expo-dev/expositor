@@ -1,5 +1,7 @@
-use crate::color::*;
-use crate::state::*;
+use crate::color::Color::*;
+use crate::search::MAX_DEPTH;
+use crate::state::State;
+use crate::misc::{ONE_THIRD, TWO_THIRD};
 
 #[derive(Clone)]
 pub struct SearchParams {
@@ -36,20 +38,23 @@ impl SearchParams {
   }
 
   //============================================================================================
-  pub fn calculate_limits(&self, state : &State) -> Limits
+  pub fn calculate_limits(&self, state : &State, default : f64) -> Limits
   {
+    const MAX_DEPTH_U8 : u8 = MAX_DEPTH as u8;
+
     let mut limits = Limits {
-      depth:  64,
+      depth:  MAX_DEPTH_U8,
       target: None,
       cutoff: None,
     };
 
-    let overhead = self.overhead as f64 * 0.001;
     if let Some(depth) = self.depth {
-      limits.depth = match depth { 0 => 1, 64..=255 => 64, _ => depth };
+      limits.depth = match depth { 0 => 1, MAX_DEPTH_U8..=255 => MAX_DEPTH_U8, _ => depth };
     }
 
     // Mode 1. Fixed time  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+    let overhead = self.overhead as f64 * 0.001;
 
     if let Some(movetime) = self.movetime {
       let secs = movetime as f64 * 0.001;
@@ -58,18 +63,18 @@ impl SearchParams {
     }
 
     // Mode 2. Time control  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-    //   See https://www.desmos.com/calculator/olv4i9y3rj, which incidental is not so different
-    //   from Stockfish's time control: https://www.desmos.com/calculator/jm26qglpzc.
+    //   See https://www.desmos.com/calculator/olv4i9y3rj, which incidentally is not so
+    //   different from Stockfish's time control: https://www.desmos.com/calculator/jm26qglpzc.
 
     let mut clock : Option<f64> = None;
     let mut increment : f64 = 0.0;
 
     match state.turn {
-      Color::White => {
+      White => {
         if let Some(clk) = self.wtime { clock     = Some(clk as f64 * 0.001); }
         if let Some(inc) = self.winc  { increment =      inc as f64 * 0.001 ; }
       }
-      Color::Black => {
+      Black => {
         if let Some(clk) = self.btime { clock     = Some(clk as f64 * 0.001); }
         if let Some(inc) = self.binc  { increment =      inc as f64 * 0.001 ; }
       }
@@ -98,11 +103,8 @@ impl SearchParams {
       }
       else {
         let ply_remaining = linear_model(state);
-        moves_remaining = (ply_remaining * 0.5).max(if no_increment { 24.0 } else { 8.0 });
+        moves_remaining = (ply_remaining * 0.5).max(if no_increment { 24.0 } else { 12.0 });
       }
-
-      const ONE_THIRD : f64 = 0.333_333_333_333_333_333;
-      const TWO_THIRD : f64 = 0.666_666_666_666_666_667;
 
       let base;
       if no_increment {
@@ -111,6 +113,13 @@ impl SearchParams {
       else {
         base = (seconds_remaining - increment) / moves_remaining + increment;
       }
+      // If we wanted to spend the same time per move, we'd write
+      //   base = seconds_remaining / moves_remaining;
+      // but we usually want to spend more time in the opening
+      //   and midgame, so we reshape a bit.
+      let base =
+        if state.ply < 80 { base * (1.5 - 0.00625 * state.ply as f64) }
+        else              { base                                      };
       let target = (   base   ).min(seconds_remaining * ONE_THIRD);
       let cutoff = (base * 3.0).min(seconds_remaining * TWO_THIRD);
       limits.target = Some((target - overhead).max(0.0));
@@ -120,7 +129,7 @@ impl SearchParams {
 
     // Modes 3 and 4. Default and Fixed depth  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-    if self.depth.is_none() { limits.cutoff = Some(10.0); }
+    if self.depth.is_none() { limits.cutoff = Some(default); }
     return limits;
   }
   //============================================================================================
@@ -128,12 +137,12 @@ impl SearchParams {
 
 fn linear_model(state : &State) -> f64
 {
-  // Fit from TCEC games and games that Expositor played on Lichess
-  //   that were all at least 30 moves long and less than 120 moves long.
-  // The coefficient of determination for the regression is about 0·47
-  //   and the mean absolute deviation was about 25·5 ply.
+  // Fit from TCEC games from Season 19 onward that were all at least 30 moves
+  //   long and at most 120 moves long.
+  // The coefficient of determination for the regression was about 0·48 and the
+  //   mean absolute deviation was about 27 ply.
   let ply = state.ply as f64;
   let men = (state.sides[0] | state.sides[1]).count_ones() as f64 - 2.0;
-  let rem = 39.0 - ply*0.25 + men*2.6;
+  let rem = 29.0 - ply*0.2 + men*3.0;
   return rem;
 }

@@ -1,8 +1,8 @@
-use crate::context::*;
-use crate::misc::*;
-use crate::movegen::*;
-use crate::movetype::*;
-use crate::state::*;
+use crate::context::Context;
+use crate::misc::Op;
+use crate::movegen::Selectivity;
+use crate::movetype::{Move, fast_eq};
+use crate::state::State;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -56,11 +56,11 @@ impl MoveSelector {
     // The empty slot is at next_quiet-1, so the last-emitted move is at next_quiet-2
     if self.next_quiet < 2 { return; }
     let last = &self.late_moves[self.next_quiet-2];
-    context.update_history(last.piece as usize, last.dst as usize, height, true);
+    context.update_history(last.piece, last.dst as usize, height, true);
 
     for x in 0..(self.next_quiet-2) {
       let mv = &self.late_moves[x];
-      context.update_history(mv.piece as usize, mv.dst as usize, height, false);
+      context.update_history(mv.piece, mv.dst as usize, height, false);
     }
   }
 
@@ -78,8 +78,8 @@ impl MoveSelector {
           if state.incheck { self.selectivity = Selectivity::Everything; }
           self.early_moves.reserve(16);
           self.late_moves.reserve(32);
-          self.early_moves.push(NULL_MOVE);
-          self.late_moves.push(NULL_MOVE);
+          self.early_moves.push(Move::NULL);
+          self.late_moves.push(Move::NULL);
           self.next_capture = 1;
           self.next_quiet = 1;
           state.generate_legal_moves(
@@ -136,7 +136,7 @@ impl MoveSelector {
           self.early_moves[selection_index] = self.early_moves[self.next_capture].clone();
           self.next_capture += 1;
           let mv = &self.early_moves[self.next_capture-2];
-          if quick_eq(mv, &self.hint_move) {
+          if fast_eq(mv, &self.hint_move) {
             continue;
           }
           return Some(mv.clone());
@@ -147,9 +147,10 @@ impl MoveSelector {
           let killer_1 = &context.killer_table[self.height as usize].1;
           for x in 1..self.late_moves.len() {
             let mv = &mut self.late_moves[x];
-            mv.score = context.lookup_history(mv.piece as usize, mv.dst as usize, self.height);
-            if quick_eq(mv, killer_1) { mv.score = 126; }
-            if quick_eq(mv, killer_0) { mv.score = 127; }
+            mv.score = context.lookup_history(mv.piece, mv.dst as usize, self.height);
+            // TODO factor direct and discovered check into score?
+            if fast_eq(mv, killer_1) { mv.score = 126; }
+            if fast_eq(mv, killer_0) { mv.score = 127; }
           }
           self.stage = Stage::EmitQuietMoves;
           continue;
@@ -173,7 +174,7 @@ impl MoveSelector {
           self.late_moves[selection_index] = self.late_moves[self.next_quiet].clone();
           self.next_quiet += 1;
           let mv = &self.late_moves[self.next_quiet-2];
-          if quick_eq(mv, &self.hint_move) {
+          if fast_eq(mv, &self.hint_move) {
             continue;
           }
           return Some(mv.clone());
@@ -197,7 +198,7 @@ impl MoveSelector {
           self.early_moves[selection_index] = self.early_moves[self.next_capture].clone();
           self.next_capture += 1;
           let mv = &self.early_moves[self.next_capture-2];
-          if quick_eq(mv, &self.hint_move) {
+          if fast_eq(mv, &self.hint_move) {
             continue;
           }
           return Some(mv.clone());
@@ -208,3 +209,79 @@ impl MoveSelector {
     }
   }
 }
+
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+// Since rust does not have a fall-through variant of match, we could resort to labelled breaks
+//   to get the control flow graph we really want. Here is an example:
+//
+//   pub fn demo(stage : usize, x : i8) -> i8
+//   {
+//     let mut x = x;
+//     'e: loop {
+//       'd: loop {
+//         'c: loop {
+//           'b: loop {
+//             match stage {
+//               0 => {} //    a
+//               1 => { break 'b; }
+//               2 => { break 'c; }
+//               3 => { break 'd; }
+//               _ => { break 'e; }
+//             }
+//             // case A
+//             x *= 2;
+//             break;
+//           }
+//           // case B
+//           x *= 3;
+//           break;
+//         }
+//         // case C
+//         x *= 5;
+//         break;
+//       }
+//       // case D
+//       x *= 7;
+//       break;
+//     }
+//     // case E
+//     x *= 11;
+//     return x;
+//   }
+//
+// Using rustc 1.55.0, this compiles to
+//
+//   example::demo:
+//           cmp     rdi, 3
+//           ja      .LBB0_3
+//           lea     rax, [rip + .LJTI0_0]
+//           movsxd  rcx, dword ptr [rax + 4*rdi]
+//           add     rcx, rax
+//           jmp     rcx
+//   .LBB0_4:
+//           add     sil, sil
+//   .LBB0_5:
+//           movzx   eax, sil
+//           lea     esi, [rax + 2*rax]
+//   .LBB0_6:
+//           movzx   eax, sil
+//           lea     esi, [rax + 4*rax]
+//   .LBB0_2:
+//           movzx   eax, sil
+//           lea     esi, [8*rax]
+//           sub     esi, eax
+//   .LBB0_3:
+//           movzx   eax, sil
+//           lea     ecx, [rax + 4*rax]
+//           lea     eax, [rax + 2*rcx]
+//           ret
+//   .LJTI0_0:
+//           .long   .LBB0_4-.LJTI0_0
+//           .long   .LBB0_5-.LJTI0_0
+//           .long   .LBB0_6-.LJTI0_0
+//           .long   .LBB0_2-.LJTI0_0
+//
+// When there are four stages rather than five, the compiler emits a series of test+jump
+//   instructions, but happily, when the number of cases is sufficiently large, the compiler
+//   instead emits a jump table (as seen above).

@@ -1,88 +1,54 @@
-use crate::color::*;
-use crate::movetype::*;
-use crate::nnue::*;
-use crate::piece::*;
-use crate::state::*;
+use crate::color::Color::{self, *};
+use crate::misc::vmirror;
+use crate::movegen::Selectivity::Everything;
+use crate::nnue::{HEADS, Network};
+use crate::piece::Kind::King;
+use crate::piece::Piece;
+use crate::policy::{PolicyNetwork, PolicyBuffer};
+use crate::state::State;
 
-pub struct ShowParams {
-  pub previous : (i8, i8),
-  pub current : (i8, i8),
-  pub good   : (i8, i8),
-  pub bad   : (i8, i8),
-}
-
-pub const NOHILT : ShowParams =
-  ShowParams {
-    previous: (-1, -1),
-    current: (-1, -1),
-    good:   (-1, -1),
-    bad:   (-1, -1),
-  };
-
-pub fn highlight(prev : &Move, curr : &Move) -> ShowParams
+pub fn show(state : &State, perspective : Color)
 {
-  return ShowParams {
-    previous: if prev.is_null() { (-1, -1) } else { (prev.src, prev.dst) },
-    current: if curr.is_null() { (-1, -1) } else { (curr.src, curr.dst) },
-    good:   (-1, -1),
-    bad:   (-1, -1),
-  };
-}
-
-pub fn hi(prev : &Move, curr : &Move) -> ShowParams { return highlight(prev, curr); }
-
-pub fn show(state : &State, perspective : Color, params : &ShowParams)
-{
+  let icon = ['K', 'Q', 'R', 'B', 'N', '●'];
   eprint!("\x1B[0m");
   for rank in (0..8).rev() {
     for file in 0..8 {
       let square = rank*8 + file;
-      let square = if perspective == Color::Black { 63 - square } else { square };
+      let square = if perspective == Black { 63 - square } else { square };
       let parity = (rank + file) % 2 == 0;
 
-      let mut p = -1;
+      let mut piece = Some(Piece::Null);  // None indicates an error
       for x in 0..16 {
-        if (state.boards[x as usize] >> square) & 1 != 0 {
-          p = if p < 0 { x as i8 } else { 16 };
+        if state.boards[x] & (1 << square) != 0 {
+          if piece.unwrap() != Piece::Null {
+            piece = None;
+            break;
+          }
+          piece = Some(Piece::from(x as u8));
         }
       }
-      if p < 16 {
-        if state.squares[square] != Piece::from_i8(p) { p = 16; }
+      if let Some(p) = piece {
+        if state.squares[square] != p { piece = None; }
       }
 
-      let square = square as i8;
-
-      let previous = square == params.previous.0 || square == params.previous.1;
-      let current  = square == params.current.0  || square == params.current.1;
-      let good     = square == params.good.0     || square == params.good.1;
-      let bad      = square == params.bad.0      || square == params.bad.1;
-
-      let mut bg = if parity { (181, 135, 99) } else { (212, 190, 154) };
-
-      if previous        { bg = if parity { (159, 145,  71) } else { (209, 193, 116) }; }
-      if bad             { bg = if parity { (206,  80,  69) } else { (233, 105,  95) }; }
-      if good            { bg = if parity { ( 19, 167,  77) } else { ( 65, 191, 103) }; }
-      if current         { bg = if parity { (123, 102, 229) } else { (146, 126, 252) }; }
-      if current && bad  { bg = if parity { (195,  77, 156) } else { (219, 103, 179) }; }
-      if current && good { bg = if parity { (  8, 136, 126) } else { ( 60, 160, 149) }; }
-
+      let bg = if parity { (181, 135, 99) } else { (212, 190, 154) };
       eprint!("\x1B[48;2;{};{};{}m", bg.0, bg.1, bg.2);
 
-      if p < 0 {
-        eprint!("   ");
-      }
-      else {
-        if p >= 16 {
-          eprint!("\x1B[97;101m");
-          eprint!(" ? ");
+      if let Some(p) = piece {
+        if p.is_null() {
+          eprint!("   ");
         }
         else {
-          match Color::from_u8(p as u8 >> 3) {
-            Color::White => eprint!("\x1B[97m"),
-            Color::Black => eprint!("\x1B[30m"),
+          match p.color() {
+            White => { eprint!("\x1B[97m"); }
+            Black => { eprint!("\x1B[30m"); }
           }
-          eprint!(" {} ", DISPLAY[p as usize]);
+          eprint!(" {} ", icon[p.kind()]);
         }
+      }
+      else {
+        eprint!("\x1B[97;101m");
+        eprint!(" ? ");
       }
     }
     eprintln!("\x1B[0m");
@@ -90,14 +56,15 @@ pub fn show(state : &State, perspective : Color, params : &ShowParams)
   eprintln!("\x1B[2m{} to move  {:5} dfz\x1B[22m", state.turn, state.dfz);
 }
 
-pub fn show_derived(state : &State, network : &Network)
+pub fn derived(state : &State, network : &Network)
 {
-  let mut state = state.clone();
-  let base = network.evaluate(&state);
-  let base = match state.turn { Color::White => base, Color::Black => -base };
+  let mut state = state.clone_empty();
+  let head_idx = state.head_index();
+  let base = network.evaluate(&state, head_idx);
+  let base = match state.turn { White => base, Black => -base };
 
   eprint!("\x1B[0m");
-  for _ in 0..24 { eprint!("\n"); }
+  for _ in 0..24 { eprintln!(); }
   eprint!("\x1B[24A");
   for rank in (0..8).rev() {
     for file in 0..8 {
@@ -113,23 +80,26 @@ pub fn show_derived(state : &State, network : &Network)
       }
       else {
         match piece.color() {
-          Color::White => eprint!("\x1B[97m"),
-          Color::Black => eprint!("\x1B[30m"),
+          White => eprint!("\x1B[97m"),
+          Black => eprint!("\x1B[30m"),
         }
-        eprint!("   {}   \x1B[7D\x1B[B", UPPER[piece as usize]);
-        if piece.kind() == KING {
+        eprint!("   {}   \x1B[7D\x1B[B", piece.kind().upper());
+        if piece.kind() == King {
           eprint!("       \x1B[7D");
         }
         else {
-          state.boards[piece as usize] ^= 1u64 << square;
-          let hyp = network.evaluate(&state);
-          let ofs = match state.turn { Color::White => base - hyp, Color::Black => base + hyp };
-          state.boards[piece as usize] ^= 1u64 << square;
-          if ofs.abs() >= 10.0 {
-            eprint!(" {:+5.1} \x1B[7D", ofs);
+          state.boards[piece] ^= 1 << square;
+          let hyp = network.evaluate(&state, head_idx);
+          let diff = match state.turn {
+            White => base - hyp,
+            Black => base + hyp
+          };
+          state.boards[piece] ^= 1 << square;
+          if diff.abs() >= 10.0 {
+            eprint!(" {:+5.1} \x1B[7D", diff);
           }
           else {
-            eprint!(" {:+5.2} \x1B[7D", ofs);
+            eprint!(" {:+5.2} \x1B[7D", diff);
           }
         }
       }
@@ -137,5 +107,124 @@ pub fn show_derived(state : &State, network : &Network)
     }
     eprint!("\x1B[0m\r\x1B[3B");
   }
-  eprintln!("NNUE evaluation {:+.3}\x1B[44G{} to move", base, state.turn);
+  eprintln!("NNUE evaluation {:+7.3}\x1B[44G{} to move", base, state.turn);
+  eprint!("\x1B[2m");
+  for h in 0..HEADS {
+    eprint!("hd {} evaluation {:+7.3}", h, network.evaluate(&state, h));
+    if h == head_idx { eprintln!(" <-"); } else { eprintln!(); }
+  }
+  eprint!("\x1B[0m");
+}
+
+pub fn showpolicy(state : &State, network : &PolicyNetwork, quiet_only : bool)
+{
+  let mut buf = PolicyBuffer::zero();
+  network.initialize(state, &mut buf);
+
+  let mut scores = [f32::INFINITY; 384];
+  let mut best = [(f32::INFINITY, crate::movetype::Move::NULL); 20];
+  let (early_moves, late_moves) = state.legal_moves(Everything);
+  let maybe_early =
+    if quiet_only { Vec::new().into_iter() } else { early_moves.into_iter() };
+  for m in maybe_early.chain(late_moves.into_iter()) {
+    let src = m.src as usize;
+    let src = match state.turn { White => src, Black => vmirror(src) };
+    let dst = m.dst as usize;
+    let dst = match state.turn { White => dst, Black => vmirror(dst) };
+    let s = network.evaluate(&buf, m.piece.kind(), src, dst);
+    let idx = (m.piece.kind() as usize)*64 + m.dst as usize;
+    let z = scores[idx];
+    if z.is_infinite() || s < z { scores[idx] = s; }
+    for x in 0..20 {
+      if s < best[x].0 {
+        for y in (x+1..20).rev() { best[y] = best[y-1]; }
+        best[x] = (s, m);
+        break;
+      }
+    }
+  }
+
+  eprint!("\x1B[0m");
+  for row in 0..2 {
+    for rank in (0..8).rev() {
+      for column in 0..3 {
+        let kind = row*3 + column;
+        for file in 0..8 {
+          let square = rank*8 + file;
+          let idx = kind*64 + square;
+          let parity = (rank + file) % 2 == 0;
+          // let bg = if parity { (121,  93, 70) } else { (151, 122,  98) };
+          // let wc = if parity { (136, 107, 84) } else { (167, 136, 113) };
+          // let bc = if parity { (106,  79, 57) } else { (136, 107,  84) };
+          let bg = if parity { (22, 22, 22) } else { (34, 34, 34) };
+          let wc = if parity { (34, 34, 34) } else { (46, 46, 46) };
+          let bc = if parity { (11, 11, 11) } else { (22, 22, 22) };
+          eprint!("\x1B[48;2;{};{};{}m", bg.0, bg.1, bg.2);
+          let s = scores[idx];
+          let p = state.squares[square];
+          if s.is_infinite() {
+            if p.is_null() {
+              eprint!("   ");
+            }
+            else {
+              let icon = ['K', 'Q', 'R', 'B', 'N', 'P'];
+              let fg = match p.color() { White => wc, Black => bc };
+              eprint!("\x1B[38;2;{};{};{}m", fg.0, fg.1, fg.2);
+              eprint!(" {} ", icon[p.kind()]);
+            }
+          }
+          else {
+            // let a = (1.0 + s).recip();
+            // let b = 1.0 - a;
+            // let fg = match state.turn { White => (255, 255, 255), Black => (0, 0, 0) };
+            // let red = (a * fg.0 as f32 + b * bg.0 as f32).round() as u8;
+            // let grn = (a * fg.1 as f32 + b * bg.1 as f32).round() as u8;
+            // let blu = (a * fg.2 as f32 + b * bg.2 as f32).round() as u8;
+            let wow =  (  0, 255, 128);
+            let okay = (  0,  96, 255);
+            let bad  = (192,   0,   0);
+            let a; let f; let g;
+            let x = s - 0.5;
+            if x >= 0.0 {
+              a = (1.0 + x).recip();
+              f = okay; g = bad;
+            }
+            else {
+              a = (1.0 - x*4.0).recip();
+              f = okay; g = wow;
+            }
+            let b = 1.0 - a;
+            let red = (a * f.0 as f32 + b * g.0 as f32).round() as u8;
+            let grn = (a * f.1 as f32 + b * g.1 as f32).round() as u8;
+            let blu = (a * f.2 as f32 + b * g.2 as f32).round() as u8;
+            eprint!("\x1B[38;2;{red};{grn};{blu}m");
+            if p.is_null() {
+              eprint!(" ● ");
+            }
+            else {
+              let icon = ['K', 'Q', 'R', 'B', 'N', 'P'];
+              eprint!(" {} ", icon[p.kind()]);
+            }
+          }
+        }
+        if column != 2 { eprint!("\x1B[49m  "); }
+      }
+      eprintln!("\x1B[0m");
+    }
+    // if row != 1 { eprint!("\n"); }
+    eprint!("\n");
+  }
+  for r in 0..4 {
+    for c in 0..5 {
+      let (s, m) = &best[c*4 + r];
+      if c == 0 { eprint!("\x1B[2m"); } else { eprint!("   "); }
+      if *s > crate::score::PROVEN_MATE as f32 {
+        eprint!("  ..... ...  ");
+      }
+      else {
+        eprint!("{:+7.2} {:5}", s, m.in_context(state));
+      }
+    }
+    eprint!("\x1B[22m\n");
+  }
 }

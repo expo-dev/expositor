@@ -3,8 +3,11 @@ use std::simd::Simd;
 #[cfg(target_feature="avx")]
 use std::arch::x86_64::*;
 
+// #[cfg(not(target_feature="avx"))]
+// use std::simd::{SimdFloat, SimdPartialOrd};
+use std::simd::num::SimdFloat;
 #[cfg(not(target_feature="avx"))]
-use std::simd::{SimdFloat, SimdPartialOrd};
+use std::simd::cmp::SimdPartialOrd;
 
 // Number of single-precision floating-point numbers per vector
 #[cfg(target_feature="avx")]
@@ -15,7 +18,7 @@ pub const LANES : usize = 4;
 
 macro_rules! simd_load {
   ($a:expr, $b:expr) => {
-    Simd::from_slice(&$a[LANES*$b .. LANES*($b+1)])
+    Simd::from_slice(&$a[$b*LANES .. ($b+1)*LANES])
   }
 }
 
@@ -50,6 +53,34 @@ pub fn horizontal_sum(x : Simd<f32, LANES>) -> f32
   return x.reduce_sum();
 }
 
+// #[cfg(target_feature="avx")]
+// #[inline]
+// pub fn relu_ps(x : Simd<f32, 8>) -> Simd<f32, 8>
+// {
+//   let x = __m256::from(x);
+//   // let r = unsafe { _mm256_max_ps(x, _mm256_broadcast_ss(&0.0)) };
+//   let r = unsafe {
+//     _mm256_min_ps(
+//       _mm256_max_ps(
+//         x,
+//         _mm256_broadcast_ss(&0.0)
+//       ),
+//       _mm256_broadcast_ss(&1.0)
+//     )
+//   };
+//   return Simd::from(r);
+// }
+
+// #[cfg(not(target_feature="avx"))]
+#[inline]
+pub fn relu_ps(x : Simd<f32, LANES>) -> Simd<f32, LANES>
+{
+  return x.simd_max(Simd::splat(0.0));
+  // return x.simd_max(Simd::splat(0.0)).simd_min(Simd::splat(1.0));
+}
+
+/* LEAKY ReLU  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
 // With -C opt-level=3 -C target-cpu=skylake this compiles to
 //
 //   .LCPI0_0:
@@ -81,8 +112,8 @@ pub fn horizontal_sum(x : Simd<f32, LANES>) -> f32
 //   compile to a sequence of instructions. The _mm256_broadcast_ss, however, is meant to
 //   compile directly to vbroadcastss.
 //
-// To be fair, even though I expect the code generated first to be faster than the second,
-//   I'm not certain.
+// I'm not sure which is faster. What makes a bigger difference here – an additional
+//   instruction, or increased memory bandwidth? (a 32-byte versus 4-byte load)
 //
 #[cfg(target_feature="avx")]
 #[inline]
@@ -122,3 +153,5 @@ pub fn d_relu_ps(x : Simd<f32, LANES>) -> Simd<f32, LANES>
 {
   return x.simd_lt(Simd::splat(0.0)).select(Simd::splat(0.03125), Simd::splat(1.0));
 }
+
+~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ */

@@ -1,63 +1,75 @@
-use crate::algebraic::*;
-use crate::cache::*;
-use crate::color::*;
-use crate::context::*;
-use crate::default::*;
-use crate::import::*;
-use crate::limits::*;
-use crate::movegen::*;
-use crate::movesel::*;
-use crate::movetype::*;
-use crate::nnue::*;
-use crate::nonsense::*;
-use crate::perft::*;
-use crate::regress::*;
-use crate::resolve::*;
-use crate::search::*;
-use crate::show::*;
-use crate::tablebase::*;
-use crate::test::*;
-use crate::training::*;
-use crate::score::*;
-use crate::state::*;
-use crate::util::*;
+use crate::algebraic::{Algebraic, parse_long, parse_short};
+use crate::cache::initialize_cache;
+use crate::color::Color::*;
+use crate::context::Context;
+use crate::datagen::{OpeningParams, generate_training_data};
+use crate::global::{syzygy_enabled, searching, enable_prev_gen, enable_nnue};
+use crate::limits::SearchParams;
+use crate::movetype::Move;
+use crate::nnue::{NETWORK, Network};
+use crate::perft::run_perft;
+use crate::policy::{PolicyNetwork, train_policy};
+use crate::proof::{ALLOC_SIZE, ProofNode, ProofBuffer, ProofAlloc, pns};
+use crate::resolve::debug_resolving_search;
+use crate::score::{INVALID_SCORE, LOWEST_SCORE, HIGHEST_SCORE, format_score, format_uci_score};
+use crate::search::{MAX_DEPTH, start_search, stop_search};
+use crate::show::{show, showpolicy, derived};
+use crate::simplex::{SimplexConfig, simplexitor};
+use crate::state::{MiniState, State};
+use crate::syzygy::*;
+use crate::tablebase::probe_tb_line;
+use crate::training::train_nnue;
+use crate::util::{
+  VERSION,
+  STDOUT,
+  STDERR,
+  STDOUT_ISATTY,
+  STDERR_ISATTY,
+  isatty,
+  num_cores
+};
 
-use std::io::Write;
-use std::time::Instant;
-
+macro_rules! ttyeprint {
+  ($($x:expr),*) => {
+    if isatty(STDERR) { eprint!($($x),*); }
+  }
+}
 macro_rules! ttyeprintln {
   ($($x:expr),*) => {
     if isatty(STDERR) { eprintln!($($x),*); }
   }
 }
 
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-
-pub const CACHE_SIZE_DEFAULT      : usize = 67108864;  // 64 MiB ~ 4 million entries
-pub const SEARCH_THREADS_DEFAULT  : usize = 1;
-pub const SEARCH_OVERHEAD_DEFAULT : usize = 10;
-
-#[cfg(    debug_assertions) ] pub const USE_PREV_GEN_DEFAULT : bool = false;
-#[cfg(not(debug_assertions))] pub const USE_PREV_GEN_DEFAULT : bool = true;
+const SIMPLEXITOR : bool = false;
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+pub const CACHE_SIZE_DEFAULT  : usize = 67_108_864; // 64 MiB ~ 4 million entries
+const SEARCH_THREADS_DEFAULT  : usize = 1;
+const SEARCH_OVERHEAD_DEFAULT : usize = 10;
+const USE_PREV_GEN_DEFAULT    : bool  = true;
+
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+const MARGIN : u64 = 100;
 
 pub fn uci() -> std::io::Result<()>
 {
-  unsafe {
-    SEARCH_NETWORK = DEFAULT_NETWORK;
-    USE_PREV_GEN = USE_PREV_GEN_DEFAULT;
-  }
+  initialize_cache(CACHE_SIZE_DEFAULT);
 
-  let mut root     = State::new();
-  let mut history  = Vec::new();
-  let mut previous = NULL_MOVE;
-  let mut current  = NULL_MOVE;
+  enable_prev_gen(USE_PREV_GEN_DEFAULT);
+  let mut search_threads  = SEARCH_THREADS_DEFAULT;
+  let mut search_overhead = SEARCH_OVERHEAD_DEFAULT;
+
+  let mut supervisor : Option<std::thread::JoinHandle<()>> = None;
+
+  let mut root    = State::new();
+  let mut history = Vec::new();
 
   root.initialize_nnue();
 
-  let mut search_overhead = SEARCH_OVERHEAD_DEFAULT;
-  let mut search_threads  = SEARCH_THREADS_DEFAULT;
+  let mut policy_network = PolicyNetwork::zero();
+  let mut proof_alloc : Option<ProofAlloc> = None;
 
   let stdin = std::io::stdin();
   let mut buf = String::new();
@@ -65,25 +77,30 @@ pub fn uci() -> std::io::Result<()>
     buf.clear();
     let inp_len = stdin.read_line(&mut buf)?;
     if inp_len == 0 { break; }  // EOF
-    let mut inp = buf.trim().split_ascii_whitespace();
+    let mut inp = buf.split_ascii_whitespace();
     let cmd = match inp.next() { Some(cmd) => cmd, None => continue };
     match cmd {
       // UCI ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
       "uci" => {
         println!("id name Expositor {}", VERSION);
-        println!("id author Korawend");
+        println!("id author Kade");
         println!("option name Hash type spin default {} min 1 max 262144", CACHE_SIZE_DEFAULT >> 20);
         println!("option name Threads type spin default {} min 1 max 252", SEARCH_THREADS_DEFAULT);
         println!("option name Overhead type spin default {} min 0 max 1000", SEARCH_OVERHEAD_DEFAULT);
         println!("option name Persist type check default {}", USE_PREV_GEN_DEFAULT);
+        println!("option name Nnue type check default true");
+        println!("option name SyzygyPath type string default <empty>");
         println!("uciok");
       }
 
       "setoption" => {
-        if search_in_progress() {
-          ttyeprintln!("error: search in progress");
-          continue;
+        if searching() {
+          std::thread::sleep(std::time::Duration::from_millis(MARGIN));
+          if searching() {
+            ttyeprintln!("error: search in progress");
+            continue;
+          }
         }
 
         if inp.next().unwrap_or("") != "name" {
@@ -130,9 +147,32 @@ pub fn uci() -> std::io::Result<()>
 
           "Persist" => {
             match val.to_lowercase().as_str() {
-              "true" | "t" | "yes" | "y" => unsafe { USE_PREV_GEN = true;  }
-              "false" | "f" | "no" | "n" => unsafe { USE_PREV_GEN = false; }
+              "true" | "t" | "yes" | "y" => { enable_prev_gen(true ); }
+              "false" | "f" | "no" | "n" => { enable_prev_gen(false); }
               _ => { ttyeprintln!("error: invalid or missing value"); }
+            }
+          }
+
+          "Nnue" => {
+            match val.to_lowercase().as_str() {
+              "true" | "t" | "yes" | "y" => { enable_nnue(true ); }
+              "false" | "f" | "no" | "n" => { enable_nnue(false); }
+              _ => { ttyeprintln!("error: invalid or missing value"); }
+            }
+          }
+
+          "SyzygyPath" => {
+            if val.as_str() == "<empty>" {
+              if syzygy_enabled() {
+                disable_syzygy();
+                ttyeprintln!("note: syzygy tablebase disabled");
+              }
+            }
+            else if initialize_syzygy(&val) {
+              ttyeprintln!("note: initialized {}-man syzygy tablebase", syzygy_support());
+            }
+            else {
+              ttyeprintln!("note: unable to initialize syzygy tablebase");
             }
           }
 
@@ -140,9 +180,13 @@ pub fn uci() -> std::io::Result<()>
         }
       }
 
+      "auto" => {
+        let th = std::cmp::max(num_cores()/2, 1);
+        search_threads = th;
+        initialize_cache(CACHE_SIZE_DEFAULT * th);
+      }
+
       "ucinewgame" => {
-        previous = NULL_MOVE;
-        current  = NULL_MOVE;
         history.clear();
       }
 
@@ -158,8 +202,6 @@ pub fn uci() -> std::io::Result<()>
             "startpos" => {
               root = State::new();
               root.initialize_nnue();
-              previous = NULL_MOVE;
-              current  = NULL_MOVE;
               history.clear();
             }
             "fen" => {
@@ -167,8 +209,6 @@ pub fn uci() -> std::io::Result<()>
                 Ok(new) => {
                   root = new;
                   root.initialize_nnue();
-                  previous = NULL_MOVE;
-                  current  = NULL_MOVE;
                   history.clear();
                 }
                 Err(msg) => {
@@ -178,58 +218,115 @@ pub fn uci() -> std::io::Result<()>
               }
             }
             "moves" => {
-              continue;
+              // do nothing
             }
             _ => {
-              match parse_universal(&root, token) {
-                Ok(mv) => {
-                  root.apply(&mv);
-                  history.push((root.key, mv.is_capture()));
-                  previous = current;
-                  current = mv;
-                }
-                Err(msg) => {
-                  ttyeprintln!("error: {}", msg);
+              if let Ok(n) = token.parse::<usize>() {
+                if n >= 324 {
+                  ttyeprintln!("error: starting position must be less than 324");
                   break;
                 }
+                root = State::new324(n);
+                root.initialize_nnue();
+                history.clear();
+                continue;
               }
+              if let Ok(mv) = parse_long(&root, token) {
+                root.apply(&mv);
+                history.push((root.key, mv.is_capture()));
+                continue;
+              }
+              if let Ok(mv) = parse_short(&root, token) {
+                root.apply(&mv);
+                history.push((root.key, mv.is_capture()));
+                continue;
+              }
+              ttyeprintln!("error: unable to parse \"{}\"", token);
+              break;
             }
-          }
-        }
-      }
+          } // match token
+        } // while let Some(token) = inp.next()
+        root.truncate();
+      } // "position"
 
       "flip" => {
         root.turn = !root.turn;
+        root.incheck = root.in_check(root.turn);
+        root.key = root.zobrist();
+      }
+
+      "key" => {
+        if isatty(STDERR) { eprintln!("{:016x}", root.key); root.verify_zobrist(); }
+      }
+
+      // "invert" => {
+      //   if !isatty(STDERR) { continue; }
+      //   let tok = match inp.next() { Some(tok) => tok, None => continue };
+      //   let key = match tok.parse::<u64>() { Ok(key) => key, Err(_) => continue };
+      //   let inversion = crate::zobrist::invert(key, &root, 0);
+      //   show(&inversion, White);
+      // }
+
+      "fen" => {
+        println!("{}", root.to_fen());
+      }
+
+      "quick" => {
+        if let Some(token) = inp.next() {
+          if let Ok(ary) = <&[u8; 40]>::try_from(token.as_bytes()) {
+            let mini = MiniState::from_quick(ary);
+            root = State::from(&mini);
+            root.key = root.zobrist();
+            root.initialize_nnue();
+            history.clear();
+            ttyeprintln!("note: {} {}", format_score(mini.score), mini.outcome());
+            continue;
+          }
+          ttyeprintln!("error: position must be 40 bytes long");
+        }
+        else {
+          println!("{}", MiniState::from(&root).to_quick());
+        }
       }
 
       // Search  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
       "go" => {
-        if root.rights == 0 && (root.sides[W] | root.sides[B]).count_ones() < 4 {
-          let (score, pv) = probe_tb_line(&mut root);
-          let best = if pv.is_empty() { NULL_MOVE } else { pv[0].clone() };
-          if isatty(STDERR) {
-            let rectified = if root.turn == Color::Black { -score } else { score };
-            eprint!("TB \x1B[1m{:>4}\x1B[22m", format_score(rectified));
-            for mv in pv.iter() { eprint!(" {}", mv); }
-            eprint!("\n");
+        let men = (root.sides[White] | root.sides[Black]).count_ones();
+        let syz = syzygy_enabled() && syzygy_support() >= men;
+        if !SIMPLEXITOR && root.rights == 0 && (men == 3 || syz) {
+          let mut score = INVALID_SCORE;
+          let mut pv = Vec::new();
+          if men == 3 {
+            (score, pv) = probe_tb_line(&mut root);
           }
-          if !isatty(STDOUT) || !isatty(STDERR) {
-            print!("info depth 64 seldepth 64 nodes 1 time 0 score {}", format_uci_score(score));
-            if !pv.is_empty() {
-              print!(" multipv 1 pv");
-              for mv in pv { print!(" {}", mv.algebraic()); }
+          else if let Some(pair) = probe_syzygy_line(&mut root) {
+            (score, pv) = pair;
+          }
+          if score != INVALID_SCORE {
+            let best = if pv.is_empty() { Move::NULL } else { pv[0].clone() };
+            if isatty(STDERR) {
+              let rectified = match root.turn { White => score, Black => -score };
+              eprint!("TB \x1B[1m{:>4}\x1B[22m", format_score(rectified));
+              for mv in pv.iter() { eprint!(" {}", mv); }
+              eprint!("\n");
             }
-            print!("\n");
-            println!("bestmove {}", best.algebraic());
+            if !isatty(STDOUT) || !isatty(STDERR) {
+              print!("info depth 1 seldepth 1 nodes 1 time 0 score {}", format_uci_score(score));
+              if !pv.is_empty() {
+                print!(" multipv 1 pv");
+                for mv in pv { print!(" {}", mv.algebraic()); }
+              }
+              print!("\n");
+              println!("bestmove {}", best.algebraic());
+            }
+            continue;
           }
-          continue;
         }
-
         let mut params = SearchParams::new();
         while let Some(opt) = inp.next() {
           if opt == "infinite" {
-            params.depth = Some(64);
+            params.depth = Some(MAX_DEPTH as u8);
             continue;
           }
           if let Some(arg) = inp.next() {
@@ -248,256 +345,191 @@ pub fn uci() -> std::io::Result<()>
         if !isatty(STDOUT) {
           params.overhead = search_overhead;
         }
-        let limits = params.calculate_limits(&root);
-        if search_in_progress() {
-          std::thread::sleep(std::time::Duration::from_millis(100));
-          if search_in_progress() {
+        let limits = params.calculate_limits(&root, if SIMPLEXITOR { 0.0 } else { 10.0 });
+        if SIMPLEXITOR {
+          // ↓↓↓ TEMPORARY ↓↓↓
+          showpolicy(&root, &policy_network, false);
+          // ↑↑↑ TEMPORARY ↑↑↑
+          simplexitor(&root, &history, limits, SimplexConfig::PolicyOnly, &policy_network);
+          continue;
+        }
+        if searching() {
+          std::thread::sleep(std::time::Duration::from_millis(MARGIN));
+          if searching() {
             ttyeprintln!("error: search in progress");
             continue;
           }
         }
-        start_search(&root, &history, limits, search_threads);
+        supervisor = Some(start_search(&root, &history, limits, search_threads));
       }
 
       "stop" => {
-        if !search_in_progress() {
-          std::thread::sleep(std::time::Duration::from_millis(100));
-          if !search_in_progress() {
+        if SIMPLEXITOR { continue; }
+        if !searching() {
+          std::thread::sleep(std::time::Duration::from_millis(MARGIN));
+          if !searching() {
             ttyeprintln!("error: no search in progress");
             continue;
           }
         }
         loop {
-          stop_search();
+          if let Some(ref handle) = supervisor { stop_search(handle); }
           std::thread::sleep(std::time::Duration::from_millis(10));
-          if !search_in_progress() { break; }
+          if !searching() { break; }
         }
-      }
-
-      // Statistics  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-
-      "reset"  => {
-        if search_in_progress() {
-          ttyeprintln!("error: search in progress");
-          continue;
-        }
-        unsafe { GLOBAL_STATISTICS.reset(); }
-      }
-
-      "stat" => {
-        if !isatty(STDERR) { continue; }
-        if search_in_progress() { eprintln!("error: search in progress"); continue; }
-        unsafe { GLOBAL_STATISTICS.print_stats(); }
-      }
-
-      "trace" => {
-        if !isatty(STDERR) { continue; }
-        if search_in_progress() { eprintln!("error: search in progress"); continue; }
-        unsafe { GLOBAL_STATISTICS.print_trace(); }
       }
 
       // Tools ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-      "isatty" | "stderr-isatty" | "stdout-isatty" => {
-        if let Some(toggle) = inp.next() {
-          match toggle.to_lowercase().as_str() {
-            "true" | "t" | "yes" | "y" => unsafe {
-              if cmd == "isatty" || cmd == "stderr-isatty" { STDERR_ISATTY = Some(true); }
-              if cmd == "isatty" || cmd == "stdout-isatty" { STDOUT_ISATTY = Some(true); }
+      "isatty" => {
+        let mut maybe = inp.next();
+        let mut which = 0b_11;
+        if let Some(token) = maybe {
+          match token.to_lowercase().as_str() {
+            "stdout" => { which = 0b_01; maybe = inp.next(); }
+            "stderr" => { which = 0b_10; maybe = inp.next(); }
+            _ => {}
+          }
+          if let Some(token) = maybe {
+            let set = match token.to_lowercase().as_str() {
+              "true" | "t" | "yes" | "y" => true,
+              "false" | "f" | "no" | "n" => false,
+              _ => { ttyeprintln!("error: invalid value"); continue; }
+            };
+            unsafe {
+              if which & 0b_01 != 0 { STDOUT_ISATTY = Some(set); }
+              if which & 0b_10 != 0 { STDERR_ISATTY = Some(set); }
             }
-            "false" | "f" | "no" | "n" => unsafe {
-              if cmd == "isatty" || cmd == "stderr-isatty" { STDERR_ISATTY = Some(false); }
-              if cmd == "isatty" || cmd == "stdout-isatty" { STDOUT_ISATTY = Some(false); }
-            }
-            _ => { ttyeprintln!("error: invalid value"); }
           }
         }
       }
 
-      "clear" => {
-        if isatty(STDERR) { eprint!("\x1B[H\x1B[J"); let _ = std::io::stderr().flush(); }
-      }
-
       "show" => {
-        if isatty(STDERR) { show(&root, Color::White, &hi(&previous, &current)); }
-      }
-
-      "key" => {
-        if isatty(STDERR) { eprintln!("{:016x}", root.key); root.verify_zobrist(); }
+        if isatty(STDERR) { show(&root, White); }
       }
 
       "perft" => {
         if isatty(STDERR) { run_perft(); }
       }
 
-      "regression" => {
-        if isatty(STDERR) { if let Some(path) = inp.next() { fit_dataset(path)?; } }
-      }
-
-      "resolve-debug" => {
+      "resolve" => {
         if !isatty(STDERR) { continue; }
         debug_resolving_search(
-          &mut root, 0, 0, i16::MIN+1, i16::MAX, &mut Context::new()
+          &mut root, 0, 0, LOWEST_SCORE, HIGHEST_SCORE, &mut Context::new()
         );
       }
 
-      "resolve-leaves" => {
+      "selfplay" => {
+        let subcmd = match inp.next() { Some(x) => x, None => continue };
+        let gen_policy_data = match subcmd {
+          "moves" => true, "positions" => false, _ => continue
+        };
+
+        ttyeprint!("  Output path:      ");
+        buf.clear();
+        stdin.read_line(&mut buf)?;
+        let path = String::from(buf.trim());
+
+        ttyeprint!("  Num processes:    \x1B[s\x1B[2m1\x1B[22m\x1B[u");
+        buf.clear();
+        stdin.read_line(&mut buf)?;
+        let num_procs = buf.trim().parse::<u8>().unwrap_or(1);
+        ttyeprintln!("\x1B[A\x1B[21G{}\x1B[K", num_procs);
+        if num_procs == 0 { continue; }
+
+        ttyeprint!("  Size of dataset:  ");
+        buf.clear();
+        stdin.read_line(&mut buf)?;
+        let total_todo = buf.trim().parse::<usize>().unwrap_or(0);
+        if total_todo == 0 { continue; }
+
+        ttyeprint!("  Random startpos:  \x1B[s\x1B[2mno\x1B[22m\x1B[u");
+        buf.clear();
+        stdin.read_line(&mut buf)?;
+        let rand_startpos = match buf.to_lowercase().as_str().trim() {
+          "y" | "yes" | "t" | "true" => true, _ => false
+        };
+        ttyeprintln!("\x1B[A\x1B[21G{}\x1B[K", if rand_startpos { "yes" } else { "no" });
+
+        ttyeprint!("  Tgt branch fact:  ");
+        buf.clear();
+        stdin.read_line(&mut buf)?;
+        let branch_target = buf.trim().parse::<f64>().unwrap_or(0.0);
+        if !(branch_target > 0.0) { continue; }
+
+        // ttyeprint!("  PRNG seed:        \x1B[s\x1B[2m0\x1B[22m\x1B[u");
+        ttyeprint!("  PRNG seed:        ");
+        buf.clear();
+        stdin.read_line(&mut buf)?;
+        let seed = buf.trim().parse::<u64>().unwrap();
+        ttyeprintln!("\x1B[A\x1B[21G{}\x1B[K", seed);
+
+        let args = OpeningParams {
+          gen_moves:     gen_policy_data,
+          num_procs:     num_procs,
+          total_todo:    total_todo,
+          rand_startpos: rand_startpos,
+          branch_target: branch_target,
+        };
+        let (openings, emitted) = generate_training_data(&path, &args, &root, seed)?;
+        ttyeprintln!("note: explored {openings} openings");
+        ttyeprintln!("note: emitted {emitted} samples");
+      }
+
+      "policy" => {
+        let path = match inp.next() { Some(x) => x, None => continue };
+        train_policy(path)?;
+      }
+
+      "lp" => {
+        let path = match inp.next() { Some(x) => x, None => continue };
+        policy_network = PolicyNetwork::load(path)?;
+      }
+
+      "ls" => {
+        showpolicy(&root, &policy_network, false);
+      }
+
+      "ip" => {
+        let path = match inp.next() { Some(x) => x, None => continue };
+        policy_network.save_image(&format!("1-{}", path), 1)?;
+        policy_network.save_image(&format!("2-{}", path), 2)?;
+        policy_network.save_image(&format!("3-{}", path), 3)?;
+      }
+
+      // Proof Number Search ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+      /* "alloc" => {
         if !isatty(STDERR) { continue; }
-        let mut context = Context::new();
-        if let Some(path) = inp.next() {
-          for state in FENReader::open(path)? {
-            let mut state = state?.0;
-            state.initialize_nnue();
-            resolving_search_leaves(
-              &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context
-            );
-          }
-        }
-      }
+        let tok = match inp.next() { Some(x) => x, None => continue };
+        let mb = match tok.parse::<usize>() { Ok(sz) => sz, Err(_) => continue };
+        let mut sz = mb * 1024 * 1024 / 24;
+        let mut log2 = 0;
+        loop { sz >>= 1; if size == 0 { break; } log2 += 1; }
+        let sz : usize = 1 << log2;
+      } */
 
-      "resolve-error" => {
+      "proof" => {
         if !isatty(STDERR) { continue; }
-
-        let mut context = Context::new();
-        let mut statistics = Statistics::new();
-        let mut total_error = 0.0;
-        let mut num_positions = 0;
-
-        if let Some(path) = inp.next() {
-          let dataset = FENReader::open_scored(
-            path,
-            ScoreUnit::FractionalPawn,
-            ScoreSign::FlipWhenBlackToMove
-          )?;
-          for triple in dataset {
-            let (mut state, score, _) = triple?;
-            if score == i16::MIN { continue; }
-            let score = score as f32 / 100.0;
-            state.initialize_nnue();
-            let prediction = resolving_search(
-              &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context, &mut statistics
-            ) as f32 / 100.0;
-            let error = harsh_compress(prediction) - harsh_compress(score);
-            total_error += error * error;
-            num_positions += 1;
-          }
-
-          for x in 0..20 { eprintln!("  {:2} {}", x, statistics.r_nodes_at_length[x]); }
-          let nodes = statistics.r_nodes_at_height.iter().sum::<usize>();
-          eprintln!("  {:8} node", nodes);
-          eprintln!("  {:8.1} node/pos", nodes as f32 / num_positions as f32);
-          let avg_error = total_error / num_positions as f32;
-          eprintln!("  {:.6} error", avg_error);
+        if proof_alloc.is_none() {
+          eprint!("Allocating... ");
+          let buf = Box::into_raw(vec![ProofNode::NULL; ALLOC_SIZE].into_boxed_slice());
+          proof_alloc = Some(unsafe { Box::from_raw(buf as *mut ProofBuffer) });
+          eprintln!("Done.");
         }
-      }
-
-      "resolve-perf" => {
-        if !isatty(STDERR) { continue; }
-        let mut context = Context::new();
-        let mut statistics = Statistics::new();
-        let mut total_duration = 0.0;
-        for pos in RESOLVING_TESTS {
-          eprintln!("{}", pos);
-          let mut state = State::from_fen(pos).unwrap();
-          state.initialize_nnue();
-          let mut selector = MoveSelector::new(Selectivity::Everything, 0, NULL_MOVE);
-          let metadata = state.save();
-          while let Some(mv) = selector.next(&mut state, &context) {
-            state.apply(&mv);
-            let timer = Instant::now();
-            let score = -resolving_search(
-              &mut state, 0, 0, i16::MIN+1, i16::MAX,
-              &mut context, &mut statistics
-            );
-            let duration = timer.elapsed().as_secs_f64();
-            total_duration += duration;
-            if duration >= 0.0001 {
-              let fg = if duration >= 0.0100 { "\x1B[91m" }
-                  else if duration >= 0.0010 { "\x1B[39m" }
-                  else                       { "\x1B[2m"  };
-              eprintln!(
-                "  {:5} {:+6} {}{:9.6}\x1B[0m  \x1B[2m{}\x1B[0m",
-                mv, score, fg, duration, state.to_fen()
-              );
-            }
-            state.undo(&mv);
-            state.restore(&metadata);
+        let mut limit = 255;
+        if let Some(tok) = inp.next() {
+          if let Ok(p) = tok.parse::<u8>() {
+            limit = if p > 127 { 255 } else { std::cmp::max(1, p) * 2 - 1 };
           }
         }
-        for x in 0..24 {
-          eprintln!("  {:2} {}", x, statistics.r_nodes_at_length[x]);
-        }
-        let nodes = statistics.r_nodes_at_height.iter().sum::<usize>();
-        eprintln!("{} knodes", (nodes as f64 / 1000.0).round() as usize);
-        eprintln!("{} knode/s", (nodes as f64 / 1000.0 / total_duration).round() as usize);
+        pns(proof_alloc.as_mut().unwrap(), &root, limit);
       }
-
-      "filter" => {
-        let mut context = Context::new();
-        let mut statistics = Statistics::new();
-
-        if let Some(path) = inp.next() {
-          let dataset = FENReader::open_scored(
-            path,
-            ScoreUnit::FractionalPawn,
-            ScoreSign::LeaveUnchanged,
-          )?;
-          for triple in dataset {
-            let (mut state, actual_score, outcome) = triple?;
-            if actual_score.abs() == PROVEN_MATE { continue; }
-            state.initialize_nnue();
-            let static_score = state.evaluate_in_game() as f32 / 100.0;
-            let resolved_score = resolving_search(
-              &mut state, 0, 0, i16::MIN+1, i16::MAX, &mut context, &mut statistics
-            ) as f32 / 100.0;
-            let tactical_diff = harsh_compress(static_score) - harsh_compress(resolved_score);
-            if tactical_diff.abs() > 0.1 { continue; }
-            print!("{} = {:+.2}", state.to_fen(), actual_score as f32 / 100.0);
-            match outcome {
-             -1 => { print!(" b"); }
-              0 => { print!(" d"); }
-              1 => { print!(" w"); }
-              _ => {}
-            }
-            println!();
-          }
-        }
-      }
-
-      "nonsense" => {
-        run_nonsense_openings();
-      }
-
-      // ↓↓↓ TEMPORARY ↓↓↓
-      "canonicalize" => {
-        if let Some(path) = inp.next() { canonicalize(path)?; }
-      }
-
-      "convert" => {
-        if let Some(path) = inp.next() {
-          let dataset = PGNReader::open(path)?;
-          for game in dataset {
-            let mut game = game?;
-            let result = match game.result {
-              GameResult::White => 'w',
-              GameResult::Black => 'b',
-              GameResult::Draw  => 'd',
-              GameResult::Incomplete => continue
-            };
-            println!("{} = {}", game.initial.to_fen(), result);
-            for mv in game.movelist {
-              game.initial.apply(&mv);
-              println!("{} = {}", game.initial.to_fen(), result);
-            }
-          }
-        }
-      }
-      // ↑↑↑ TEMPORARY ↑↑↑
 
       // NNUE  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
       "eval" => {
-        if  isatty(STDERR) { show_derived(&root, unsafe { &SEARCH_NETWORK }); }
+        if  isatty(STDERR) { derived(&root, unsafe { &NETWORK }); }
         if !isatty(STDOUT) { println!("{}", (root.evaluate() * 100.0).round() as i16); }
       }
 
@@ -505,21 +537,103 @@ pub fn uci() -> std::io::Result<()>
         if let Some(path) = inp.next() {
           let mut path = path.to_owned();
           if !path.ends_with(".nnue") { path.push_str(".nnue"); }
-          unsafe { SEARCH_NETWORK = Network::load(&path)?; }
+          unsafe { NETWORK = Network::load(&path)?; }
           root.initialize_nnue();
         }
       }
 
       "save" => {
-        if let Some(path) = inp.next() {
-          let mut path = path.to_owned();
-          if !path.ends_with(".rs") { path.push_str(".rs"); }
-          unsafe { SEARCH_NETWORK.save_source(&path)?; }
+        let subcmd = match inp.next() { Some(x) => x, None => continue };
+        let path   = match inp.next() { Some(x) => x, None => continue };
+        match subcmd {
+          "source" => {
+            let mut path = path.to_owned();
+            if !path.ends_with(".rs") { path.push_str(".rs"); }
+            unsafe { NETWORK.save_source(&path)?; }
+          }
+          "image" => {
+            unsafe {
+              NETWORK.save_image(&format!("{path}-fst-indp-all"), false, -1)?;
+              NETWORK.save_image(&format!("{path}-fst-unif-all"), true,  -1)?;
+              for r in 0..crate::nnue::REGIONS {
+                NETWORK.save_image(&format!("{path}-fst-indp-{r}"), false, r as i8)?;
+                NETWORK.save_image(&format!("{path}-fst-unif-{r}"), true,  r as i8)?;
+              }
+            }
+          }
+          _ => {}
         }
       }
 
-      "train" => {
+      "stat" => {
+        // ↓↓↓ TEMPORARY ↓↓↓
+        if let Some(path) = inp.next() {
+          use crate::import::QuickReader;
+          use crate::nnue::king_region;
+          use crate::misc::vmirror;
+          let mut region_count = [[0; 5]; 5];
+          let mut sm_count     = [0; 64];
+          let mut sw_count     = [0; 64];
+          for qk in QuickReader::open(path)? {
+            let mini = qk?;
+            let wk =         mini.positions[White][0] as usize ;
+            let bk = vmirror(mini.positions[Black][0] as usize);
+            let side_to_move = match mini.turn() { White => wk, Black => bk };
+            let side_waiting = match mini.turn() { White => bk, Black => wk };
+            region_count[king_region(side_to_move)][king_region(side_waiting)] += 1;
+            sm_count[side_to_move] += 1;
+            sw_count[side_waiting] += 1;
+          }
+          eprintln!("Aggregated");
+          for rank in (0..8).rev() {
+            for file in 0..8 {
+              eprint!("  {:9}", sm_count[rank*8 + file] + sw_count[rank*8 + file]);
+            }
+            eprintln!();
+          }
+          eprintln!("Side to move");
+          for rank in (0..8).rev() {
+            for file in 0..8 {
+              eprint!("  {:9}", sm_count[rank*8 + file]);
+            }
+            eprintln!();
+          }
+          eprintln!("Side waiting");
+          for rank in (0..8).rev() {
+            for file in 0..8 {
+              eprint!("  {:9}", sw_count[rank*8 + file]);
+            }
+            eprintln!();
+          }
+          eprintln!("Side to move");
+          for sm in 0..5 {
+            let c = region_count[sm].iter().sum::<usize>();
+            eprintln!("  {} {:9}", sm, c);
+          }
+          eprintln!("Side waiting");
+          for sw in 0..5 {
+            let c = region_count.iter().map(|x| x[sw]).sum::<usize>();
+            eprintln!("  {} {:9}", sw, c);
+          }
+          eprintln!("Regions");
+          for sm in 0..5 {
+            eprint!("  {}", sm);
+            for sw in 0..5 {
+              eprint!("  {:9}", region_count[sm][sw]);
+            }
+            eprintln!();
+          }
+        }
+        // ↑↑↑ TEMPORARY ↑↑↑
+        else {
+          unsafe { NETWORK.stat(); }
+        }
+      }
+
+      "train" | "refine" => {
         if !isatty(STDERR) { continue; }
+
+        let finetune = cmd == "refine";
 
         eprint!("  Input path:    ");
         buf.clear();
@@ -531,40 +645,65 @@ pub fn uci() -> std::io::Result<()>
         stdin.read_line(&mut buf)?;
         let out_prefix = String::from(buf.trim());
 
-        eprint!("  Learning rate: \x1B[2m0.01\x1B[22m\x1B[4D");
+        eprint!("  Learning rate: \x1B[s\x1B[2m0.015625\x1B[22m\x1B[u");
         buf.clear();
         stdin.read_line(&mut buf)?;
-        let alpha = buf.trim().parse::<f32>().unwrap_or(0.01);
+        let alpha = buf.trim().parse::<f32>().unwrap_or(0.015625);
+        eprintln!("\x1B[A\x1B[18G{}\x1B[K", alpha);
 
-        eprint!("  Beta:          \x1B[2m0.875\x1B[22m\x1B[5D");
+        eprint!("  Beta:          \x1B[s\x1B[2m0.875\x1B[22m\x1B[u");
         buf.clear();
         stdin.read_line(&mut buf)?;
         let beta = buf.trim().parse::<f32>().unwrap_or(0.875);
+        eprintln!("\x1B[A\x1B[18G{}\x1B[K", beta);
 
-        eprint!("  Gamma:         \x1B[2m0.96875\x1B[22m\x1B[7D");
+        eprint!("  Gamma:         \x1B[s\x1B[2m0.96875\x1B[22m\x1B[u");
         buf.clear();
         stdin.read_line(&mut buf)?;
         let gamma = buf.trim().parse::<f32>().unwrap_or(0.96875);
+        eprintln!("\x1B[A\x1B[18G{}\x1B[K", gamma);
 
-        eprint!("  Batch size:    \x1B[2m16384\x1B[22m\x1B[5D");
+        eprint!("  1/Epsilon:     \x1B[s\x1B[2m4096\x1B[22m\x1B[u");
         buf.clear();
         stdin.read_line(&mut buf)?;
-        let batch_size = buf.trim().parse::<usize>().unwrap_or(16384);
+        let recip_epsilon = buf.trim().parse::<usize>().unwrap_or(4096) as f32;
+        eprintln!("\x1B[A\x1B[18G{}\x1B[K", recip_epsilon);
 
-        eprint!("  Thread count:  ");
+        eprint!("  Thread count:  \x1B[s\x1B[2m1\x1B[22m\x1B[u");
         buf.clear();
         stdin.read_line(&mut buf)?;
         let num_threads = buf.trim().parse::<usize>().unwrap_or(1);
+        eprintln!("\x1B[A\x1B[18G{}\x1B[K", num_threads);
 
-        eprint!("  RNG seed:      \x1B[2m0\x1B[22m\x1B[D");
+        let mut default_sz = num_threads;
+        while default_sz < 16384 { default_sz *= 2; }
+
+        eprint!("  Batch size:    \x1B[s\x1B[2m{default_sz}\x1B[22m\x1B[u");
+        buf.clear();
+        stdin.read_line(&mut buf)?;
+        let batch_size = buf.trim().parse::<usize>().unwrap_or(default_sz);
+        eprintln!("\x1B[A\x1B[18G{}\x1B[K", batch_size);
+
+        eprint!("  RNG seed:      \x1B[s\x1B[2m0\x1B[22m\x1B[u");
         buf.clear();
         stdin.read_line(&mut buf)?;
         let rng_seed = buf.trim().parse::<u64>().unwrap_or(0);
+        eprintln!("\x1B[A\x1B[18G{}\x1B[K", rng_seed);
+
+        let default_epochs = (batch_size + 256) / 512;
+
+        eprint!("  Epochs:        \x1B[s\x1B[2m{default_epochs}\x1B[22m\x1B[u");
+        buf.clear();
+        stdin.read_line(&mut buf)?;
+        let num_epochs = buf.trim().parse::<usize>().unwrap_or(default_epochs);
+        eprintln!("\x1B[A\x1B[18G{}\x1B[K", num_epochs);
 
         train_nnue(
+          finetune,
           &inp_path, &out_prefix,
-          alpha, beta, gamma,
-          batch_size, num_threads, rng_seed
+          alpha, beta, gamma, recip_epsilon,
+          batch_size, num_epochs,
+          num_threads, rng_seed
         )?;
       }
 
@@ -582,35 +721,47 @@ pub fn uci() -> std::io::Result<()>
         break;
       }
 
+      // Shortcuts ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
       _ => {
         if let Ok(new) = State::from_fen(&buf) {
           root = new;
           root.initialize_nnue();
-          previous = NULL_MOVE;
-          current  = NULL_MOVE;
           history.clear();
           continue;
         }
-        let text = buf.replace('.', ". ");
-        if text.starts_with("1.") {
-          root = State::new();
+        if let Ok(ary) = <&[u8; 40]>::try_from(cmd.as_bytes()) {
+          let mini = MiniState::from_quick(ary);
+          root = State::from(&mini);
+          root.key = root.zobrist();
           root.initialize_nnue();
-          previous = NULL_MOVE;
-          current  = NULL_MOVE;
           history.clear();
+          continue;
         }
-        match parse_pgn(&root, &text) {
-          Ok(movelist) => {
-            if movelist.is_empty() { continue; }
-            for mv in movelist {
-              root.apply(&mv);
-              history.push((root.key, mv.is_capture()));
-              previous = current;
-              current = mv;
-            }
+        let tokens = buf.split_ascii_whitespace();
+        let mut working = root.clone_empty();
+        let mut movelist = Vec::new();
+        for token in tokens {
+          if let Ok(mv) = parse_long(&working, token) {
+            working.apply(&mv);
+            movelist.push(mv);
+            continue;
           }
-          Err(_) => { ttyeprintln!("error: unknown command"); }
+          if let Ok(mv) = parse_short(&working, token) {
+            working.apply(&mv);
+            movelist.push(mv);
+            continue;
+          }
+          ttyeprintln!("error: unknown command");
+          movelist.clear();
+          break;
         }
+        let num_moves = movelist.len();
+        for mv in movelist {
+          root.apply(&mv);
+          history.push((root.key, mv.is_capture()));
+        }
+        if num_moves > 0 { root.truncate(); }
       }
 
       // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
@@ -619,7 +770,7 @@ pub fn uci() -> std::io::Result<()>
   return Ok(());
 }
 
-const HELP : &str = "
+pub static HELP : &str = "
 DESCRIPTION
   Expositor is a UCI-conforming chess engine for AMD64 / Intel 64 systems. There
   are no command line options but the engine can be configured through these UCI
@@ -654,10 +805,16 @@ DESCRIPTION
       does not incur the penalty of actually zeroing the table.) Setting
       this option to true generally increases playing strength.
 
+    setoption name SyzygyPath value <path>
+      Inform the engine that Syzygy tablebase files are located in the
+      directory <path> and enable the use of the Syzygy tablebases if the
+      files can be loaded.
+
   As well as some nonstandard commands:
 
-    flip          switch side to move in the current position
+    fen           print the current position in Forsyth-Edwards notation
     eval          print the static evaluation of the current position
+    flip          switch side to move in the current position
     load <file>   load a set of neural network weights and begin using them
 
     help          prints this help message
@@ -666,34 +823,32 @@ DESCRIPTION
 
   These commands are also available when stderr is a terminal:
 
-    stat        displays cumulative statistics related to move ordering
-    trace       displays cumulative statistics related to main search
-    reset       resets statistics
-
     show        displays a human readable board with the current position
     eval        displays NNUE-derived piece values and the static evaluation
-    clear       clears the terminal display
+    resolve     display the tree of a quiescing search from the current position
 
   Expositor will automatically detect whether stderr and stdout are connected to
   a terminal when running on a Linux system, but assumes when running on Windows
   that neither stderr nor stdout are connected to a terminal. This can, however,
   be explicitly overridden with the following commands:
 
-    stderr-isatty <bool>
+    isatty stderr <bool>
       Inform the engine that stderr is (or is not) connected to a terminal,
       or to behave as if stderr is (or is not) connected to a terminal.
 
-    stdout-isatty <bool>
+    isatty stdout <bool>
       Inform the engine that stdout is (or is not) connected to a terminal,
       or to behave as if stdout is (or is not) connected to a terminal.
 
+    isatty <bool>
+      Shorthand to set both isatty stderr and isatty stdout.
+
   Expositor is lenient when reading moves – short algebraic notation can be used
   wherever long algebraic notation is expected. The current position can also be
-  set by entering FEN directly (without being prefaced by \"position fen \") or by
-  entering a PGN movelist (movetext without comments or evaluation annotations).
+  set by entering FEN directly (without being prefaced by `position fen `).
 
 COPYRIGHT
-  Copyright 2023 Korawend <expositor@fastmail.com>
+  Copyright 2024 Kade <helo@expositor.dev>
   This is free software, and you are welcome to modify and redistribute it under
   certain conditions.  If users can interact with a modified version of the pro-
   gram (or a work based on the program) remotely through a computer network, you
@@ -701,9 +856,9 @@ COPYRIGHT
   command for more details.
 ";
 
-const LICENSE : &str = "
+static LICENSE : &str = "
   Expositor (chess engine)
-  Copyright 2023 Korawend
+  Copyright 2024 Kade
 
   This program is free software: you can redistribute it and/or modify it under
   the terms of version 3 of the GNU Affero General Public License (as published

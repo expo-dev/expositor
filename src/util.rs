@@ -1,7 +1,5 @@
-pub const VERSION : &'static str = env!("VERSION");
-pub const BUILD   : &'static str = env!("BUILD");
-
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+pub const VERSION : &str = env!("VERSION");
+pub const BUILD   : &str = env!("BUILD");
 
 pub const STDOUT : u64 = 1;
 pub const STDERR : u64 = 2;
@@ -21,12 +19,20 @@ pub fn isatty(fd : u64) -> bool
     let ioctl : u64 = 16;
     let tcgets : u64 = 0x5401;
     let mut empty : [u64; 8] = [0; 8];
+    // The rax, rdi, rsi, rdx, r10, r8, and r9 registers are caller-saved
+    //   registers in the kernel syscall ABI; rax is used for the return value
+    //   and the other six are used for arguments. The syscall instruction saves
+    //   the current rip (which the kernel will return to after the call) in rcx
+    //   and the flags are stored in r11.
     std::arch::asm!(
       "syscall"
       , inout("rax") ioctl => ret
       ,    in("rdi") fd
       ,    in("rsi") tcgets
       ,    in("rdx") &mut empty
+      ,   out("r10") _
+      ,   out("r8" ) _
+      ,   out("r9" ) _
       ,   out("rcx") _
       ,   out("r11") _
     );
@@ -58,6 +64,9 @@ pub fn set_stacksize(bytes : u64) -> bool
       ,    in("rdi") stacksize
       ,    in("rsi") &rlim_struct
       ,   out("rdx") _
+      ,   out("r10") _
+      ,   out("r8" ) _
+      ,   out("r9" ) _
       ,   out("rcx") _
       ,   out("r11") _
     );
@@ -67,26 +76,10 @@ pub fn set_stacksize(bytes : u64) -> bool
   { return false; }
 }
 
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-
-#[inline]
-#[cfg(target_feature="bmi2")]
-#[target_feature(enable = "bmi2")]
-pub unsafe fn pdep(a : u64, mask : u64) -> u64 {
-  return std::arch::x86_64::_pdep_u64(a, mask);
-}
-
-#[inline]
-#[cfg(not(target_feature="bmi2"))]
-pub unsafe fn pdep(mut a : u64, mut mask : u64) -> u64 {
-  let mut dst = 0;
-  while mask != 0 {
-    let idx = mask.trailing_zeros();
-    dst |= (a & 1) << idx;
-    a >>= 1;
-    mask &= mask - 1;
-  }
-  return dst;
+// NOTE that this usually returns the number of logical (not physical) cores.
+pub fn num_cores() -> usize
+{
+  return if let Ok(n) = std::thread::available_parallelism() { n.get() } else { 1 };
 }
 
 #[inline]
@@ -110,16 +103,35 @@ pub unsafe fn pext(a : u64, mut mask : u64) -> u64 {
   return dst;
 }
 
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+#[inline]
+#[cfg(target_feature="bmi2")]
+#[target_feature(enable = "bmi2")]
+pub unsafe fn pdep(a : u64, mask : u64) -> u64 {
+  return std::arch::x86_64::_pdep_u64(a, mask);
+}
 
-pub fn relu(x : f32) -> f32 { return x.max(x / 32.0); }
+#[inline]
+#[cfg(not(target_feature="bmi2"))]
+pub unsafe fn pdep(mut a : u64, mut mask : u64) -> u64 {
+  let mut dst = 0;
+  while mask != 0 {
+    let idx = mask.trailing_zeros();
+    dst |= (a & 1) << idx;
+    a >>= 1;
+    mask &= mask - 1;
+  }
+  return dst;
+}
 
-pub fn d_relu(x : f32) -> f32 { return if x < 0.0 { 0.03125 } else { 1.0 }; }
+// swap_bytes can be used instead
+/* #[inline]
+pub fn bswap(a : u64) -> u64
+{
+  return unsafe { std::arch::x86_64::_bswap64(a as i64) as u64 };
+} */
 
 pub fn harsh_compress(x : f32) -> f32
 {
-  // NOTE This is an approximation of logistic(logarithmic(x)),
-  //   but scaled so that compress(1) = 1 and the asymptotes are ±2.
   return (1.0 + (x.abs() - 1.0) / (x.abs() + 1.0)).copysign(x);
 }
 
@@ -152,19 +164,6 @@ pub fn d_gentle_compress(x : f32) -> f32
   return 6.0 / (denom * denom);
 }
 
-/* ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-// Unused functions
-
-pub fn reln(x : f32) -> f32
-{
-  return if x > 0.0 { x.ln_1p() } else { x / 32.0 };
-}
-
-pub fn d_reln(x : f32) -> f32
-{
-  return if x > 0.0 { 1.0 / (x + 1.0) } else if x < 0.0 { 0.03125 } else { 0.5 };
-}
-
 pub fn logistic(x : f32) -> f32
 {
   return 1.0 / (1.0 + (-x).exp2()) - 0.5;
@@ -177,36 +176,62 @@ pub fn d_logistic(x : f32) -> f32
   return expon * (2.0f32).ln() / (denom * denom);
 }
 
-pub fn logarithmic(x : f32) -> f32
-{
-  return ((1.0 + x.abs()).log2() * 2.0 / (3.0f32).log2()).copysign(x);
+pub struct SetU64 {
+  ary : Vec<u64>,
+  sz  : usize,
+  lg  : u8,
 }
 
-pub fn d_logarithmc(x : f32) -> f32
-{
-  return 2.0 / ((1.0 + x.abs()) * (3.0f32).ln());
-}
+impl SetU64 {
+  pub fn new() -> Self
+  {
+    return Self { ary: vec![0; 8], sz: 0, lg: 3 };
+  }
 
-pub fn inv_logarithmic(x : f32) -> f32
-{
-  return (3.0f32).powf(x / 2.0) - 1.0;
-}
+  pub fn len(&self) -> usize
+  {
+    return self.sz;
+  }
 
-// Behaves as a soft clip for centipawn scores usually in
-//   the range 0 to +10_00 but that occasionally exceed those bounds
-// First takes centipawn scores in the range -infinity to +infinity
-//   and maps them to the range 0 to +10_00
-//   (for small x, remapped(x) ~ 2_50 + 1.5x)
-// Then shifts to the range +90_00 to +99_99
-pub fn canonicalize(score : i16) -> i16
-{
-  let remapped =
-    if score < 0 {
-      -250.0 / (score as f64 * 0.006 - 1.0)
+  pub fn capacity(&self) -> usize
+  {
+    return 1 << self.lg;
+  }
+
+  pub fn insert(&mut self, x : u64) -> bool
+  {
+    assert!(x != 0);
+    let mask = (1 << self.lg) - 1;
+    let mut idx = x as usize & mask;
+    loop {
+      let key = self.ary[idx];
+      if key == x { return false; }
+      if key == 0 { break; }
+      idx = (idx + 1) & mask;
     }
-    else {
-      1000.0 - 750.0 / (score as f64 * 0.002 + 1.0)
-    };
-  return INEVITABLE_MATE + remapped as i16;
+    self.ary[idx] = x;
+    self.sz += 1;
+    if self.len()*2 > self.capacity() { self.resize(); }
+    return true;
+  }
+
+  #[inline]
+  fn resize(&mut self)
+  {
+    self.lg += 1;
+    let cap = 1 << self.lg;
+    let mut ary = vec![0; cap];
+    let mask = cap - 1;
+    for &x in self.ary.iter() {
+      if x == 0 { continue; }
+      let mut idx = x as usize & mask;
+      loop {
+        let key = ary[idx];
+        if key == 0 { break; }
+        idx = (idx + 1) & mask;
+      }
+      ary[idx] = x;
+    }
+    self.ary = ary;
+  }
 }
-*/

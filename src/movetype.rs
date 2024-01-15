@@ -1,33 +1,43 @@
-use crate::algebraic::*;
-use crate::color::*;
-use crate::misc::*;
-use crate::piece::*;
-use crate::state::*;
+use crate::algebraic::Algebraic;
+use crate::color::Color::*;
+use crate::misc::{
+  piece_destinations,
+  pawn_attacks,
+  WHITE_SHORT_CASTLE_BTWN,
+  WHITE_LONG_CASTLE_BTWN,
+  BLACK_SHORT_CASTLE_BTWN,
+  BLACK_LONG_CASTLE_BTWN,
+  WHITE_SHORT_CASTLE_CHCK,
+  WHITE_LONG_CASTLE_CHCK,
+  BLACK_SHORT_CASTLE_CHCK,
+  BLACK_LONG_CASTLE_CHCK
+};
+use crate::piece::Kind::{self, *};
+use crate::piece::Piece;
+use crate::state::State;
 
-use std::fmt::{self, Write};
+use std::fmt::Write;
 
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-
-const CAPTURE_MASK : u8 = 0x01; // .... ...1
-const ENPASS_MASK  : u8 = 0x02; // .... ..1.
-const PROMOTE_MASK : u8 = 0x04; // .... .1..
-const CASTLE_MASK  : u8 = 0x08; // .... 1...
-const PAWN_MASK    : u8 = 0x10; // ...1 ....
-const GAINFUL_MASK : u8 = 0x05; // .... .1.1  captures + promotions
-const ZEROING_MASK : u8 = 0x11; // ...1 ...1  captures + pawn moves
-const UNUSUAL_MASK : u8 = 0x06; // .... .11.  promotions + en passant
+const CAPTURE_MASK : u8 = 0b_0000_0001; // .... ...1
+const  ENPASS_MASK : u8 = 0b_0000_0010; // .... ..1.
+const PROMOTE_MASK : u8 = 0b_0000_0100; // .... .1..
+const  CASTLE_MASK : u8 = 0b_0000_1000; // .... 1...
+const    PAWN_MASK : u8 = 0b_0001_0000; // ...1 ....
+const GAINFUL_MASK : u8 = 0b_0000_0101; // .... .1.1 captures + promotions
+const ZEROING_MASK : u8 = 0b_0001_0001; // ...1 ...1 captures + pawn moves
+const UNUSUAL_MASK : u8 = 0b_0000_0110; // .... .11. promotions + en passant
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MoveType {
-  Manoeuvre          = 0x00,    // .... ....
-  Capture            = 0x01,    // .... ...1
-  Castle             = 0x08,    // .... 1...
-  PawnManoeuvre      = 0x10,    // ...1 ....
-  PawnCapture        = 0x11,    // ...1 ...1
-  CaptureEnPassant   = 0x13,    // ...1 ..11
-  Promotion          = 0x14,    // ...1 .1..
-  PromotionByCapture = 0x15,    // ...1 .1.1
+  Manoeuvre          = 0b_0000_0000,  // .... ....
+  Capture            = 0b_0000_0001,  // .... ...1
+  Castle             = 0b_0000_1000,  // .... 1...
+  PawnManoeuvre      = 0b_0001_0000,  // ...1 ....
+  PawnCapture        = 0b_0001_0001,  // ...1 ...1
+  CaptureEnPassant   = 0b_0001_0011,  // ...1 ..11
+  Promotion          = 0b_0001_0100,  // ...1 .1..
+  PromotionByCapture = 0b_0001_0101,  // ...1 .1.1
 }
 
 impl MoveType {
@@ -41,8 +51,6 @@ impl MoveType {
   #[inline] pub fn is_zeroing(self)   -> bool { return (self as u8) & ZEROING_MASK != 0; }
   #[inline] pub fn is_unusual(self)   -> bool { return (self as u8) & UNUSUAL_MASK != 0; }
 }
-
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -58,16 +66,18 @@ pub struct Move {
   pub score      : i8,
 }
 
-pub const NULL_MOVE : Move = Move {
-  movetype:   MoveType::Manoeuvre,
-  givescheck: 0,
-  src:        0,
-  dst:        0,
-  piece:      ZERO_PIECE,
-  captured:   ZERO_PIECE,
-  promotion:  ZERO_PIECE,
-  score:      0
-};
+impl Move {
+  pub const NULL : Move = Move {
+    movetype:   MoveType::Manoeuvre,
+    givescheck: 0,
+    src:        0,
+    dst:        0,
+    piece:      Piece::ZERO,
+    captured:   Piece::ZERO,
+    promotion:  Piece::ZERO,
+    score:      0
+  };
+}
 
 // NOTE that this function compares all fields of a Move except givescheck and
 //   score. The order of the comparisons is essentially arbitrary, but they are
@@ -90,7 +100,7 @@ impl Eq for Move {}
 //   dst, piece, and promotion. This requires that the Move struct uses C layout
 //   rules and that those four fields are first in the struct declaration.
 // NOTE that this is mega jank.
-pub fn quick_eq(a : &Move, b : &Move) -> bool
+pub fn fast_eq(a : &Move, b : &Move) -> bool
 {
   let ptr_a : *const Move = a;
   let ptr_b : *const Move = b;
@@ -113,6 +123,9 @@ impl Move {
   #[inline] pub fn gives_direct_check(&self)     -> bool { return self.givescheck & 1 != 0; }
   #[inline] pub fn gives_discovered_check(&self) -> bool { return self.givescheck & 2 != 0; }
 
+  const LT64 : u16 = 0b_0000_0000_0011_1111;
+  const MSB  : u16 = 0b_1000_0000_0000_0000;
+
   pub fn compress(&self) -> u16
   {
     // Format is pkkk dddd ddss ssss
@@ -124,9 +137,9 @@ impl Move {
     //
     let src = self.src as u16;
     let dst = self.dst as u16;
-    debug_assert!(src & 0xFFC0 == 0, "unable to compress source {}", src);
-    debug_assert!(dst & 0xFFC0 == 0, "unable to compress destination {}", dst);
-    let prom = if self.is_promotion() { 0x8000 } else { 0x0000 };
+    debug_assert!(src & !Self::LT64 == 0, "unable to compress source {}", src);
+    debug_assert!(dst & !Self::LT64 == 0, "unable to compress destination {}", dst);
+    let prom = if self.is_promotion() { Self::MSB } else { 0 };
     let kind = self.promotion.kind() as u16;
     return prom | (kind << 12) | (dst << 6) | src;
   }
@@ -137,107 +150,111 @@ impl Move {
   // NOTE that this function does not set the score.
   pub fn decompress(state : &State, cm : u16) -> Self
   {
-    let src = (   cm     & 0x003F) as i8;
-    let dst = ((cm >> 6) & 0x003F) as i8;
+    use MoveType::*;
+
+    let src = (   cm     & Self::LT64) as i8;
+    let dst = ((cm >> 6) & Self::LT64) as i8;
 
     // Is this a null move?
-    if src == dst { return NULL_MOVE; }
+    if src == dst { return Self::NULL; }
 
     // Is there a piece of the right color on the source?
     let piece = state.squares[src as usize];
-    if piece.is_null() || piece.color() != state.turn { return NULL_MOVE; }
+    if piece.is_null() || piece.color() != state.turn { return Self::NULL; }
 
     // Is that piece attempting to capture another piece of its own color?
     let mut captured = state.squares[dst as usize];
-    if !captured.is_null() && captured.color() == state.turn { return NULL_MOVE; }
+    if !captured.is_null() && captured.color() == state.turn { return Self::NULL; }
 
     let promotion : Piece;
     let movetype : MoveType;
 
+    let composite = state.sides[White] | state.sides[Black];
+
     // Non-promotions
-    if cm >> 15 == 0 {
-      if piece.kind() == PAWN {
-        if dst < 8 || dst >= 56 { return NULL_MOVE; }
+    if cm & Self::MSB == 0 {
+      if piece.kind() == Pawn {
+        if dst < 8 || dst >= 56 { return Self::NULL; }
         if captured.is_null() {
-          let front = src + match state.turn { Color::White => 8, Color::Black => -8 };
+          let front = src + match state.turn { White => 8, Black => -8 };
           if dst == front {
-            movetype = MoveType::PawnManoeuvre;
+            movetype = PawnManoeuvre;
           }
           else if dst == state.enpass {
-            let not_diagonal = pawn_attacks(state.turn, 1u64 << src) & (1u64 << dst) == 0;
-            if not_diagonal { return NULL_MOVE; }
-            captured = Piece::new(!state.turn, PAWN as u8);
-            movetype = MoveType::CaptureEnPassant;
+            let not_diagonal = pawn_attacks(state.turn, 1 << src) & (1 << dst) == 0;
+            if not_diagonal { return Self::NULL; }
+            captured = (!state.turn) + Pawn;
+            movetype = CaptureEnPassant;
           }
           else {
-            let start = match state.turn { Color::White => src < 16, Color::Black => src > 47 };
-            if !start { return NULL_MOVE; }
-            let composite = state.sides[W] | state.sides[B];
-            if (1u64 << front) & composite != 0 { return NULL_MOVE; }
-            let advance = front + match state.turn { Color::White => 8, Color::Black => -8 };
-            if dst != advance { return NULL_MOVE; }
-            movetype = MoveType::PawnManoeuvre;
+            let start = match state.turn { White => src < 16, Black => src > 47 };
+            if !start { return Self::NULL; }
+            if (1 << front) & composite != 0 { return Self::NULL; }
+            let advance = front + match state.turn { White => 8, Black => -8 };
+            if dst != advance { return Self::NULL; }
+            movetype = PawnManoeuvre;
           }
         }
         else {
-          let not_diagonal = pawn_attacks(state.turn, 1u64 << src) & (1u64 << dst) == 0;
-          if not_diagonal { return NULL_MOVE; }
-          movetype = MoveType::PawnCapture;
+          let not_diagonal = pawn_attacks(state.turn, 1 << src) & (1 << dst) == 0;
+          if not_diagonal { return Self::NULL; }
+          movetype = PawnCapture;
         }
       }
-      else if piece.kind() == KING && (dst - src).abs() == 2 {
+      else if piece.kind() == King && (dst - src).abs() == 2 {
         let direction = if dst < src { 1 } else { 0 };
+
         // Does the corresponding right exist?
         //   (This also ensures the king is on the correct square and that the rook is present)
-        let rights_mask = match state.turn {
-          Color::White => [0x01, 0x02], Color::Black => [0x04, 0x08]
-        };
-        if state.rights & rights_mask[direction] == 0 { return NULL_MOVE; }
+        let rights_mask = match state.turn { White => [1, 2], Black => [4, 8] };
+        if state.rights & rights_mask[direction] == 0 { return Self::NULL; }
+
         // Are the intermediate squares clear?
-        let composite = state.sides[W] | state.sides[B];
         let intermediate = match state.turn {
-          Color::White => [0x0000000000000060, 0x000000000000000E],
-          Color::Black => [0x6000000000000000, 0x0E00000000000000],
+          White => [WHITE_SHORT_CASTLE_BTWN, WHITE_LONG_CASTLE_BTWN],
+          Black => [BLACK_SHORT_CASTLE_BTWN, BLACK_LONG_CASTLE_BTWN],
         };
-        if composite & intermediate[direction] != 0 { return NULL_MOVE; }
+        if composite & intermediate[direction] != 0 { return Self::NULL; }
+
         // Are the travel squares safe?
         let travel = match state.turn {
-          Color::White => [0x0000000000000070, 0x000000000000001C],
-          Color::Black => [0x7000000000000000, 0x1C00000000000000],
+          White => [WHITE_SHORT_CASTLE_CHCK, WHITE_LONG_CASTLE_CHCK],
+          Black => [BLACK_SHORT_CASTLE_CHCK, BLACK_LONG_CASTLE_CHCK],
         };
-        let danger = state.attacked_by(!state.turn, composite);
-        if danger & travel[direction] != 0 { return NULL_MOVE; }
-        movetype = MoveType::Castle;
+        let danger = state.attacks_by(!state.turn, composite);
+        if danger & travel[direction] != 0 { return Self::NULL; }
+
+        movetype = Castle;
       }
       else {
         // Is the destination reachable?
-        let composite = state.sides[W] | state.sides[B];
         let possible = piece_destinations(piece.kind(), src as usize, composite);
-        if (1u64 << dst) & possible == 0 { return NULL_MOVE; }
-        movetype = if captured.is_null() { MoveType::Manoeuvre } else { MoveType::Capture };
+        if (1 << dst) & possible == 0 { return Self::NULL; }
+        movetype = if captured.is_null() { Manoeuvre } else { Capture };
       }
-      promotion = ZERO_PIECE;
+      promotion = Piece::ZERO;
     }
 
     // Promotions
     else {
-      if piece.kind() != PAWN { return NULL_MOVE; }
-      let endzone = match state.turn { Color::White => dst >= 56, Color::Black => dst < 8 };
-      if !endzone { return NULL_MOVE; }
+      if piece.kind() != Pawn { return Self::NULL; }
+      let endzone = match state.turn { White => dst >= 56, Black => dst < 8 };
+      if !endzone { return Self::NULL; }
       if captured.is_null() {
-        let step = dst - src == match state.turn { Color::White => 8, Color::Black => -8 };
-        if !step { return NULL_MOVE; }
-        movetype = MoveType::Promotion;
+        let step = dst - src == match state.turn { White => 8, Black => -8 };
+        if !step { return Self::NULL; }
+        movetype = Promotion;
       }
       else {
-        let not_diagonal = pawn_attacks(state.turn, 1u64 << src) & (1u64 << dst) == 0;
-        if not_diagonal { return NULL_MOVE; }
-        movetype = MoveType::PromotionByCapture;
+        let not_diagonal = pawn_attacks(state.turn, 1 << src) & (1 << dst) == 0;
+        if not_diagonal { return Self::NULL; }
+        movetype = PromotionByCapture;
       }
-      promotion = Piece::new(state.turn, ((cm >> 12) & 0x0007) as u8);
+      let kind : Kind = unsafe { std::mem::transmute(((cm >> 12) & 0b_0111) as u8) };
+      promotion = state.turn + kind;
     }
 
-    if captured.is_null() { captured = ZERO_PIECE };
+    if captured.is_null() { captured = Piece::ZERO };
     return Self {
       src:        src,
       dst:        dst,
@@ -251,10 +268,11 @@ impl Move {
   }
 }
 
-impl fmt::Display for Move {
+impl std::fmt::Display for Move {
   // NOTE that this does not disambiguate moves as required of short algebraic
-  //   notation and does not annotate checkmates, as these are contextual.
-  fn fmt(&self, f : &mut fmt::Formatter<'_>) -> fmt::Result
+  //   notation and does not annotate checkmates, as these are contextual; see
+  //   Move::in_context in algebraic.rs for a function that is context-aware.
+  fn fmt(&self, f : &mut std::fmt::Formatter<'_>) -> std::fmt::Result
   {
     let mut written = 0;
     if self.is_null() {
@@ -263,23 +281,24 @@ impl fmt::Display for Move {
     }
     else {
       let kind = self.piece.kind();
-      if kind == KING && self.dst == self.src + 2 {
+      if kind == King && self.dst == self.src + 2 {
         f.write_str("0-0")?;
         written += 3;
       }
-      else if kind == KING && self.dst == self.src - 2 {
+      else if kind == King && self.dst == self.src - 2 {
         f.write_str("0-0-0")?;
         written += 5;
       }
       else {
-        if kind == PAWN {
+        if kind == Pawn {
           if self.is_capture() {
-            f.write_char(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][self.src as usize % 8])?;
+            let files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+            f.write_char(files[self.src as usize % 8])?;
             written += 1;
           }
         }
         else {
-          f.write_char(UPPER[self.piece as usize])?;
+          f.write_char(kind.upper())?;
           written += 1;
         }
         if self.is_capture() {
@@ -290,7 +309,7 @@ impl fmt::Display for Move {
         written += 2;
         if self.is_promotion() {
           f.write_char('=')?;
-          f.write_char(UPPER[self.promotion as usize])?;
+          f.write_char(self.promotion.kind().upper())?;
           written += 2;
         }
       }

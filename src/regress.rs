@@ -1,36 +1,37 @@
-use crate::color::*;
-use crate::import::*;
-use crate::piece::*;
-use crate::state::*;
+use crate::import::{PgnReader, Termination};
+use crate::piece::Piece::*;
+use crate::state::State;
+
+// These routines are used to find the constants for the linear model used in
+//   limits.rs to estimate the number of ply remaining in a game.
 
 fn load_dataset(path : &str) -> std::io::Result<Vec<[f32; 3]>>
 {
   eprint!("Loading...\r");
-  let mut game_count = 0usize;
-  let mut skip_count = 0usize;
+  let mut game_count : usize = 0;
+  let mut skip_count : usize = 0;
   let mut dataset = Vec::new();
-  for game in PGNReader::open(path)? {
+  for game in PgnReader::open(path)? {
     let game = game?;
-    if game.termination == GameTermination::Flag {
+    if game.termination == Termination::Flag {
       skip_count += 1;
       continue;
     }
     let movelist = &game.movelist;
     let game_length = movelist.len() as u16;
     let mut working = State::new();
-    working.initialize_nnue();
     for mv in movelist {
       working.apply(&mv);
-      let wq = working.boards[WHITE+QUEEN ].count_ones() as i16;
-      let wr = working.boards[WHITE+ROOK  ].count_ones() as i16;
-      let wb = working.boards[WHITE+BISHOP].count_ones() as i16;
-      let wn = working.boards[WHITE+KNIGHT].count_ones() as i16;
-      let wp = working.boards[WHITE+PAWN  ].count_ones() as i16;
-      let bq = working.boards[BLACK+QUEEN ].count_ones() as i16;
-      let br = working.boards[BLACK+ROOK  ].count_ones() as i16;
-      let bb = working.boards[BLACK+BISHOP].count_ones() as i16;
-      let bn = working.boards[BLACK+KNIGHT].count_ones() as i16;
-      let bp = working.boards[BLACK+PAWN  ].count_ones() as i16;
+      let wq = working.boards[WhiteQueen ].count_ones() as i16;
+      let wr = working.boards[WhiteRook  ].count_ones() as i16;
+      let wb = working.boards[WhiteBishop].count_ones() as i16;
+      let wn = working.boards[WhiteKnight].count_ones() as i16;
+      let wp = working.boards[WhitePawn  ].count_ones() as i16;
+      let bq = working.boards[BlackQueen ].count_ones() as i16;
+      let br = working.boards[BlackRook  ].count_ones() as i16;
+      let bb = working.boards[BlackBishop].count_ones() as i16;
+      let bn = working.boards[BlackKnight].count_ones() as i16;
+      let bp = working.boards[BlackPawn  ].count_ones() as i16;
 
       let white_pieces = wq + wr + wb + wn + wp;
       let black_pieces = bq + br + bb + bn + bp;

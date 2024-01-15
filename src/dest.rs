@@ -1,6 +1,4 @@
 use crate::util::pdep;
-// use crate::util::pext;
-// use crate::misc::FILE_A;
 
 // A word about pdep ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 //
@@ -12,9 +10,9 @@ use crate::util::pdep;
 //   throughput of 19 cycles. As a result, methods that use these instructions are comparatively
 //   slow, and should only be used in one-time setup code.
 //
-//   When the compilation target architecture is not AMD64 / Intel64, a software implementation
-//   of pdep is used. The execution time depends on the mask, but generally speaking, it's quite
-//   slow, and so pdep should only be used in one-time setup code.
+//   When the compilation target architecture does not support the BMI2 extension, a software
+//   implementation of pdep is used. The execution time depends on the mask, but generally
+//   speaking, it's quite slow, and so pdep should only be used in one-time setup code.
 
 // Knight destinations ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
@@ -41,7 +39,7 @@ fn generate_knight_table()
 
 pub fn knight_destinations(square : usize) -> u64
 {
-  return unsafe { KNIGHT_TABLE[square] };
+  return unsafe { *KNIGHT_TABLE.get_unchecked(square) };
 }
 
 // Bishop destinations ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
@@ -68,7 +66,7 @@ fn slow_bishop_destinations(board : u64, square : usize) -> u64
   return dests;
 }
 
-static SALT_MASK : [u64; 64] = // "salt" for "saltire"
+static SALT_MASK : [u64; 64] = // saltire span
   [0x0040201008040200, 0x0000402010080400, 0x0000004020100a00, 0x0000000040221400,
    0x0000000002442800, 0x0000000204085000, 0x0000020408102000, 0x0002040810204000,
    0x0020100804020000, 0x0040201008040000, 0x00004020100a0000, 0x0000004022140000,
@@ -119,25 +117,26 @@ static mut BISHOP_TABLE : [[u64; 512]; 64] = [[0; 512]; 64];
 fn generate_bishop_table()
 {
   for square in 0..64 {
-    let mut patterns : Vec<u64> = Vec::new();
     let relevant : u64 = slow_bishop_destinations(0, square) & SALT_MASK[square];
     let num_patterns = 1 << relevant.count_ones();
     for x in 0..num_patterns {
-      patterns.push(unsafe { pdep(x, relevant) });
-    }
-    for pattern in patterns.into_iter() {
+      let pattern = unsafe { pdep(x, relevant) };
       let dests = slow_bishop_destinations(pattern, square);
       let index = pattern.wrapping_mul(BISHOP_CONST[square]) >> BISHOP_SHIFT[square];
-      unsafe { BISHOP_TABLE[square as usize][index as usize] = dests; }
+      unsafe { BISHOP_TABLE[square][index as usize] = dests; }
     }
   }
 }
 
 pub fn bishop_destinations(board : u64, square : usize) -> u64
 {
-  let board = board & SALT_MASK[square];
-  let index = board.wrapping_mul(BISHOP_CONST[square]) >> BISHOP_SHIFT[square];
-  return unsafe { BISHOP_TABLE[square][index as usize] };
+  unsafe {
+    let board = board & SALT_MASK.get_unchecked(square);
+    let index =
+      board.wrapping_mul(*BISHOP_CONST.get_unchecked(square))
+      >> BISHOP_SHIFT.get_unchecked(square);
+    return *BISHOP_TABLE.get_unchecked(square).get_unchecked(index as usize);
+  }
 }
 
 // Rook destinations ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
@@ -164,7 +163,7 @@ fn slow_rook_destinations(board : u64, square : usize) -> u64
   return dests;
 }
 
-static CRUX_MASK : [u64; 64] = // "crux" for "cruciform"
+static CRUX_MASK : [u64; 64] = // cruciform mask
   [0x000101010101017e, 0x000202020202027c, 0x000404040404047a, 0x0008080808080876,
    0x001010101010106e, 0x002020202020205e, 0x004040404040403e, 0x008080808080807e,
    0x0001010101017e00, 0x0002020202027c00, 0x0004040404047a00, 0x0008080808087600,
@@ -215,25 +214,26 @@ static mut ROOK_TABLE : [[u64; 4096]; 64] = [[0; 4096]; 64];
 fn generate_rook_table()
 {
   for square in 0..64 {
-    let mut patterns : Vec<u64> = Vec::new();
     let relevant : u64 = slow_rook_destinations(0, square) & CRUX_MASK[square];
     let num_patterns = 1 << relevant.count_ones();
     for x in 0..num_patterns {
-      patterns.push(unsafe { pdep(x, relevant) });
-    }
-    for pattern in patterns.into_iter() {
+      let pattern = unsafe { pdep(x, relevant) };
       let dests = slow_rook_destinations(pattern, square);
       let index = pattern.wrapping_mul(ROOK_CONST[square]) >> ROOK_SHIFT[square];
-      unsafe { ROOK_TABLE[square as usize][index as usize] = dests; }
+      unsafe { ROOK_TABLE[square][index as usize] = dests; }
     }
   }
 }
 
 pub fn rook_destinations(board : u64, square : usize) -> u64
 {
-  let board = board & CRUX_MASK[square];
-  let index = board.wrapping_mul(ROOK_CONST[square]) >> ROOK_SHIFT[square];
-  return unsafe { ROOK_TABLE[square][index as usize] };
+  unsafe {
+    let board = board & CRUX_MASK.get_unchecked(square);
+    let index =
+      board.wrapping_mul(*ROOK_CONST.get_unchecked(square))
+      >> ROOK_SHIFT.get_unchecked(square);
+    return *ROOK_TABLE.get_unchecked(square).get_unchecked(index as usize);
+  }
 }
 
 // Queen destinations  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
@@ -269,7 +269,7 @@ fn generate_king_table()
 
 pub fn king_destinations(square : usize) -> u64
 {
-  return unsafe { KING_TABLE[square] };
+  return unsafe { *KING_TABLE.get_unchecked(square) };
 }
 
 // Interface for Table Generation  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
@@ -284,21 +284,103 @@ pub fn generate_tables()
 
 // Alternate rook destinations ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 /*
-pub fn rook_destinations(board : u64, square : usize) -> u64
+use crate::util::pext;
+
+static mut ROOK_TABLE : [[u64; 4096]; 64] = [[0; 4096]; 64];
+
+fn generate_rook_table()
 {
-  unsafe {
-    let rank  = square / 8;
-    let file  = square % 8;
-    let r_ofs = square & !7;
-    let h_idx = (board >> r_ofs) as usize & 255;
-    let h_dst = REACHABLE[file][h_idx] as u64;
-    let v_idx = pext(board >> file, FILE_A) as usize & 255;
-    let v_dst = pdep(REACHABLE[rank][v_idx] as u64, FILE_A);
-    return (h_dst << r_ofs) | (v_dst << file);
+  for square in 0..64 {
+    let relevant : u64 = slow_rook_destinations(0, square) & CRUX_MASK[square];
+    let num_patterns : usize = 1 << relevant.count_ones();
+    for x in 0..num_patterns {
+      let pattern = unsafe { pdep(x as u64, relevant) };
+      let dests = slow_rook_destinations(pattern, square);
+      unsafe { ROOK_TABLE[square][x] = dests; }
+    }
   }
 }
 
-const REACHABLE : [[u8; 256]; 8] =
+pub fn rook_destinations(board : u64, square : usize) -> u64
+{
+  unsafe {
+    let idx = pext(board, *CRUX_MASK.get_unchecked(square)) as usize;
+    return *ROOK_TABLE.get_unchecked(square).get_unchecked(idx);
+  }
+}
+*/
+// Alternate rook destinations ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+/*
+use crate::util::pext;
+
+static mut ROOK_TABLE : [[u16; 4096]; 64] = [[0; 4096]; 64];
+
+fn generate_rook_table()
+{
+  for square in 0..64 {
+    let relevant : u64 = slow_rook_destinations(0, square) & CRUX_MASK[square];
+    let num_patterns : usize = 1 << relevant.count_ones();
+    for x in 0..num_patterns {
+      let pattern = unsafe { pdep(x as u64, relevant) };
+      let dests = slow_rook_destinations(pattern, square);
+      let compressed = unsafe { pext(dests, EDGE_CRUX_MASK[square]) };
+      unsafe { ROOK_TABLE[square][x] = compressed as u16; }
+    }
+  }
+}
+
+pub fn rook_destinations(board : u64, square : usize) -> u64
+{
+  unsafe {
+    let idx = pext(board, *CRUX_MASK.get_unchecked(square)) as usize;
+    return pdep(
+      *ROOK_TABLE.get_unchecked(square).get_unchecked(idx) as u64,
+      *EDGE_CRUX_MASK.get_unchecked(square)
+    );
+  }
+}
+
+static EDGE_CRUX_MASK : [u64; 64] =
+  [0x01010101010101fe, 0x02020202020202fd, 0x04040404040404fb, 0x08080808080808f7,
+   0x10101010101010ef, 0x20202020202020df, 0x40404040404040bf, 0x808080808080807f,
+   0x010101010101fe01, 0x020202020202fd02, 0x040404040404fb04, 0x080808080808f708,
+   0x101010101010ef10, 0x202020202020df20, 0x404040404040bf40, 0x8080808080807f80,
+   0x0101010101fe0101, 0x0202020202fd0202, 0x0404040404fb0404, 0x0808080808f70808,
+   0x1010101010ef1010, 0x2020202020df2020, 0x4040404040bf4040, 0x80808080807f8080,
+   0x01010101fe010101, 0x02020202fd020202, 0x04040404fb040404, 0x08080808f7080808,
+   0x10101010ef101010, 0x20202020df202020, 0x40404040bf404040, 0x808080807f808080,
+   0x010101fe01010101, 0x020202fd02020202, 0x040404fb04040404, 0x080808f708080808,
+   0x101010ef10101010, 0x202020df20202020, 0x404040bf40404040, 0x8080807f80808080,
+   0x0101fe0101010101, 0x0202fd0202020202, 0x0404fb0404040404, 0x0808f70808080808,
+   0x1010ef1010101010, 0x2020df2020202020, 0x4040bf4040404040, 0x80807f8080808080,
+   0x01fe010101010101, 0x02fd020202020202, 0x04fb040404040404, 0x08f7080808080808,
+   0x10ef101010101010, 0x20df202020202020, 0x40bf404040404040, 0x807f808080808080,
+   0xfe01010101010101, 0xfd02020202020202, 0xfb04040404040404, 0xf708080808080808,
+   0xef10101010101010, 0xdf20202020202020, 0xbf40404040404040, 0x7f80808080808080];
+*/
+// Alternate rook destinations ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+/*
+use crate::misc::FILE_A;
+use crate::util::pext;
+
+pub fn rook_destinations(board : u64, square : usize) -> u64
+{
+  let rank  = square / 8;
+  let file  = square % 8;
+  let r_ofs = square & !7;
+  let h_idx = (board >> r_ofs) as usize & 255;
+  let h_dst = reachable(file, h_idx);
+  let v_idx = unsafe { pext(board >> file, FILE_A) as usize };
+  let v_dst = unsafe { pdep(reachable(rank, v_idx), FILE_A) };
+  return (h_dst << r_ofs) | (v_dst << file);
+}
+
+pub fn reachable(ln : usize, idx : usize) -> u64
+{
+  return unsafe { *REACHABLE.get_unchecked(ln).get_unchecked(idx) as u64 };
+}
+
+static REACHABLE : [[u8; 256]; 8] =
   [
     [0xfe, 0xfe, 0x02, 0x02, 0x06, 0x06, 0x02, 0x02, 0x0e, 0x0e, 0x02, 0x02, 0x06, 0x06, 0x02, 0x02,
      0x1e, 0x1e, 0x02, 0x02, 0x06, 0x06, 0x02, 0x02, 0x0e, 0x0e, 0x02, 0x02, 0x06, 0x06, 0x02, 0x02,

@@ -1,23 +1,29 @@
-use crate::algebraic::*;
+use crate::algebraic::Algebraic;
 use crate::cache::*;
-use crate::color::*;
-use crate::context::*;
+use crate::color::Color::*;
+use crate::context::Context;
 use crate::constants::*;
-use crate::misc::*;
-use crate::limits::*;
-use crate::movegen::*;
-use crate::movesel::*;
-use crate::movetype::*;
-use crate::piece::*;
-use crate::resolve::*;
+use crate::formats::*;
+use crate::global::*;
+use crate::misc::NodeKind;
+use crate::limits::Limits;
+use crate::movegen::Selectivity::Everything;
+use crate::movesel::{Stage, MoveSelector};
+use crate::movetype::{Move, fast_eq};
+use crate::piece::Kind::*;
+use crate::resolve::resolving_search;
 use crate::score::*;
-use crate::state::*;
-use crate::tablebase::*;
-use crate::util::*;
+use crate::state::State;
+use crate::syzygy::{syzygy_support, probe_syzygy_wdl};
+use crate::tablebase::probe_3man;
+use crate::util::{STDOUT, STDERR, isatty};
 
 use std::time::{Instant, Duration};
 
-const MINIMUM_DEPTH : u8 = 4;
+pub const MINIMUM_DEPTH : u8 = 4;
+
+pub const MAX_DEPTH  : usize = 192;
+pub const MAX_HEIGHT : usize = 256;
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 // A word about minimax with α/β pruning
@@ -79,22 +85,7 @@ const MINIMUM_DEPTH : u8 = 4;
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-pub static mut GENERATION : usize = 0;
-pub static mut USE_PREV_GEN : bool = false;
-
-pub static mut GLOBAL_STATISTICS : Statistics = Statistics::new();
-
-static mut ABORT              : bool = false;
-static mut SEARCH_IN_PROGRESS : bool = false;
-
-static mut SUPERVISOR  : Option<std::thread::Thread> = None;
-static mut NUM_THREADS : usize                       = 0;
-static mut CONTEXT     : Vec<Context>                = Vec::new();
-static mut STATISTICS  : Vec<Statistics>             = Vec::new();
-
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-
-fn threefold(history : &Vec<(u64, bool)>) -> bool
+pub fn threefold(history : &Vec<(u64, bool)>) -> bool
 {
   let current = match history.last() { Some(a) => a.0, None => return false };
   let end = history.len() - 1;
@@ -106,7 +97,7 @@ fn threefold(history : &Vec<(u64, bool)>) -> bool
   return false;
 }
 
-fn twofold(history : &Vec<(u64, bool)>) -> bool
+pub fn twofold(history : &Vec<(u64, bool)>) -> bool
 {
   let current = match history.last() { Some(a) => a.0, None => return false };
   let end = history.len() - 1;
@@ -117,7 +108,7 @@ fn twofold(history : &Vec<(u64, bool)>) -> bool
   return false;
 }
 
-fn main_search(
+pub fn main_search(
   state    : &mut State,
   depth    : u8,
   height   : u8,
@@ -127,13 +118,12 @@ fn main_search(
   // = zero window (when true, this node is not expected to be part of the principal variation)
   expected : NodeKind,
   context  : &mut Context,
-  stats    : &mut Statistics,
 ) -> i16
 {
   table_prefetch(state.key);
 
   context.pv[height as usize].clear();
-  unsafe { if ABORT && context.nominal > MINIMUM_DEPTH { return 0; } }
+  if abort() && context.nominal > MINIMUM_DEPTH { return INVALID_SCORE; }
 
   // Step 0. 50-move rule and draw-by-repetition detection
   // The condition for two-fold repetition needs to be
@@ -143,14 +133,14 @@ fn main_search(
   else        { if threefold(&context.state_history) { return 0; } }
 
   // Step 1. Resolving search
-  if depth == 0 { return resolving_search(state, 0, height, alpha, beta, context, stats); }
+  if depth == 0 { return resolving_search(state, 0, height, alpha, beta, context); }
 
   // Step 2. Update statistics
-  stats.m_nodes_at_height[height as usize] += 1;
+  context.m_nodes_at_height[height as usize] += 1;
   let mut alpha = alpha;
   let mut beta  = beta;
 
-  // Step 3. Mate-distance pruning and internal tablebase access
+  // Step 3. Mate-distance pruning and tablebase access
   if height > 0 {
     let worst_possible = PROVEN_LOSS + (height as i16);
     let  best_possible = PROVEN_MATE - (height as i16 + 1);
@@ -159,55 +149,86 @@ fn main_search(
     if alpha >= beta { return alpha; }
   }
 
-  if height > 0 && state.rights == 0 && state.dfz == 0
+  let excluded_move = context.exclude[height as usize].clone();
+
+  if height > 0
+  && state.rights == 0
+  && state.enpass < 0
+  && excluded_move.is_null()
+  && state.dfz == 0
   {
-    let men = (state.sides[W] | state.sides[B]).count_ones();
-    /* ↓↓↓ INCOMPLETE ↓↓↓ //
-    if men == 4 { return probe_4man(state, height as i16); }
-    // ↑↑↑ INCOMPLETE ↑↑↑ */
+    let men = (state.sides[White] | state.sides[Black]).count_ones();
     if men == 3 { return probe_3man(state, height as i16); }
+    if alpha < MINIMAL_PROVEN_MATE
+    && beta  > MINIMAL_PROVEN_LOSS
+    && syzygy_enabled()
+    && syzygy_support() >= men {
+      if let Some(score) = probe_syzygy_wdl(state, height as i16) {
+        context.tb_hits += 1;
+        use std::cmp::Ordering::*;
+        match score.cmp(&0) {
+          Equal   => { return score; }
+          Greater => { alpha = std::cmp::max(alpha, score); }
+          Less    => { beta  = std::cmp::min( beta, score); }
+          // TODO is it okay (is it correct) to lower beta even
+          //   when it doesn't cause a cutoff? (it's certainly
+          //   okay to return early in the Less case if the TB
+          //   score is less than or equal to alpha)
+        }
+        if alpha >= beta { return score; }
+      }
+    }
   }
 
   // Step 4. Transposition table lookup and internal iterative reduction
-  let excluded_move = context.exclude[height as usize].clone();
   let mut depth = depth;
 
-  let mut hint_move = NULL_MOVE;
-  let mut hint_score = 0;
+  let mut hint_move = Move::NULL;
+  let mut hint_score = INVALID_SCORE;
 
   let entry =
     if excluded_move.is_null() {
-      // We mix dfz into the key when dfz is close to 100 to prevent false
-      //   positives and negatives in draw detection due to transpositions.
-      table_lookup(if state.dfz > 92 { state.key ^ state.dfz as u64 } else { state.key })
+      // // We mix dfz into the key when dfz is close to 100 to prevent false
+      // //   positives and negatives in draw detection due to transpositions.
+      // table_lookup(if state.dfz > 92 { state.key ^ state.dfz as u64 } else { state.key })
+      table_lookup(state.key)
     }
     else {
-      NULL_ENTRY
+      TableEntry::NULL
     };
 
-  let okay_generation;
-  unsafe {
-    okay_generation = USE_PREV_GEN || (entry.generation == GENERATION as u16);
-  }
+  let okay_generation = prev_gen_enabled() || (entry.generation == generation() as u16);
   if entry.hint_move != 0 && okay_generation {
-    let score =
-      if      entry.hint_score >= MINIMUM_PROVEN_MATE { entry.hint_score - height as i16 }
-      else if MINIMUM_PROVEN_LOSS >= entry.hint_score { entry.hint_score + height as i16 }
-      else                                            { entry.hint_score                 };
-    if zerowind && entry.depth >= depth {
-      if (entry.kind as u8) & (NodeKind::Cut as u8) != 0 && score >= beta  { return score; }
-      if (entry.kind as u8) & (NodeKind::All as u8) != 0 && alpha >= score { return score; }
-    }
     hint_move = Move::decompress(state, entry.hint_move);
-    hint_score = score;
-    #[cfg(debug_assertions)]
-    if hint_move.is_null() {
-      eprintln!("{}", state.to_fen());
-      eprintln!("entry.hint_move = {:016b}", entry.hint_move);
-      let src = (   entry.hint_move     & 0x003F) as i8;
-      let dst = ((entry.hint_move >> 6) & 0x003F) as i8;
-      eprintln!("src = {}, dst = {}", src.algebraic(), dst.algebraic());
-      panic!("key collision or decode error");
+    #[cfg(debug_assertions)] {
+      if hint_move.is_null() {
+        let p   = ((entry.hint_move >> 15) & 0x0001) as i8;
+        let k   = ((entry.hint_move >> 12) & 0x0007) as i8;
+        let dst = ((entry.hint_move >>  6) & 0x003F) as i8;
+        let src = ( entry.hint_move        & 0x003F) as i8;
+        eprintln!("key collision or decode error: unable to decompress");
+        eprintln!("  {}", state.to_fen());
+        eprintln!(
+          "  generation = {}, depth = {}, kind = {}",
+          entry.generation, entry.depth, entry.kind.as_str()
+        );
+        eprintln!(
+          "  hint move = {:01b} {:03b} {:06b} {:06b}, src = {}, dst = {}",
+          p, k, dst, src, src.algebraic(), dst.algebraic()
+        );
+        eprintln!("  hint score = {:+} = {}", entry.hint_score, format_score(entry.hint_score));
+      }
+    }
+    if !hint_move.is_null() {
+      let score =
+        if      entry.hint_score >= MINIMAL_TB_MATE { entry.hint_score - height as i16 }
+        else if MINIMAL_TB_LOSS >= entry.hint_score { entry.hint_score + height as i16 }
+        else                                        { entry.hint_score                 };
+      if zerowind && entry.depth >= depth {
+        if (entry.kind as u8) & (NodeKind::Cut as u8) != 0 && score >= beta  { return score; }
+        if (entry.kind as u8) & (NodeKind::All as u8) != 0 && alpha >= score { return score; }
+      }
+      hint_score = score;
     }
   }
   else if height >= 2 && depth >= 6 && excluded_move.is_null() {
@@ -218,22 +239,21 @@ fn main_search(
   let metadata = state.save();
 
   // Step 6. Reductions and pruning
-  let mut lower_estimate = i16::MIN;
+  let mut lower_estimate = INVALID_SCORE;
   let mut futile = false;
 
   if context.nominal > 4 && height > 0 && zerowind && !state.incheck {
 
-    let ofs = (state.turn as usize) * 8;
-    let pieces = state.boards[ofs + QUEEN ]
-               | state.boards[ofs + ROOK  ]
-               | state.boards[ofs + BISHOP]
-               | state.boards[ofs + KNIGHT];
+    let pieces = state.boards[state.turn+Queen ]
+               | state.boards[state.turn+Rook  ]
+               | state.boards[state.turn+Bishop]
+               | state.boards[state.turn+Knight];
     let num_pieces = pieces.count_ones();
 
     let static_eval =
       if !hint_move.is_null() && entry.kind == NodeKind::PV { 0 /* this will be ignored */ }
-    //else if depth > 4 { resolving_search(state, 0, height, alpha, beta, context, stats) }
-      else { state.evaluate_in_game() };
+    //else if depth > 4 { resolving_search(state, 0, height, alpha, beta, context) }
+      else { state.game_eval() };
 
     let ignore_hint = hint_move.is_null() || entry.kind == NodeKind::All;
     let upper_estimate = if ignore_hint { static_eval } else { hint_score };
@@ -258,27 +278,31 @@ fn main_search(
       let null_depth = ((depth as u32)*4096 - reduction) / 4096;
       state.apply_null();
       context.null[height as usize] = true;
-      let null_score = -main_search(
+      let subscore = main_search(
         state, null_depth as u8, height+1, -beta, -beta+1, true,
-        NodeKind::All, context, stats
+        NodeKind::All, context
       );
+      context.null[height as usize] = false;
       state.undo_null();
       state.restore(&metadata);
+      if subscore == INVALID_SCORE { return INVALID_SCORE; }
+      let null_score = -subscore;
       if null_score >= beta {
         // At high depths, add verification search? (regular search at low depth)
         //   Verification search is required to also equal or exceed beta to
         //   actually perform the pruning.
+        // TODO perhaps come up with a more sophisticated
+        //   estimate of when zugzwang isn't a concern.
         if num_pieces >= 2 { return null_score; }
         depth = std::cmp::min(depth - 4, depth / 2);
       }
     }
   }
-  context.null[height as usize] = false;
 
   // Step 7. Extensions and multicut
 
   //   Step 7a. Check extension
-  //   NOTE should this or the original depth be recorded in the cache update?
+  //   TODO should this or the original depth be recorded in the cache update?
   if state.incheck { depth += 1; }
 
   //   Step 7b. Singular extension and multicut
@@ -290,7 +314,7 @@ fn main_search(
     && !hint_move.is_null()
     && entry.depth >= depth - 2
     && (entry.kind as u8) & (NodeKind::Cut as u8) != 0
-    && hint_score.abs() < MINIMUM_PROVEN_MATE
+    && hint_score.abs() < MINIMAL_TB_MATE
   {
     let reduction = SSE_BASE + (depth as i32)*SSE_SCALE;
     let sse_depth = ((depth as u32)*4096 - (reduction as u32)) / 4096;
@@ -299,13 +323,15 @@ fn main_search(
     let margin = margin as i16;
 
     context.exclude[height as usize] = hint_move.clone();
-    let singular_score = main_search(
-      state, sse_depth as u8, height, hint_score-margin-1, hint_score-margin, true,
-      expected, context, stats
+    let subscore = main_search(
+      state, sse_depth as u8, height, hint_score-margin-1, hint_score-margin,
+      true, expected, context
     );
-    context.exclude[height as usize] = NULL_MOVE;
-    if singular_score >= hint_score-margin {
-      if hint_score-margin >= beta { return hint_score-margin; }
+    context.exclude[height as usize] = Move::NULL;
+    if subscore == INVALID_SCORE { return INVALID_SCORE; }
+    let singular_score = subscore;
+    if singular_score >= hint_score - margin {
+      if hint_score - margin >= beta { return hint_score - margin; }
     }
     else {
       extend_hint = true;
@@ -314,19 +340,19 @@ fn main_search(
 
   // Step 8. Move iteration
   let mut selector = MoveSelector::new(
-    Selectivity::Everything,
+    Everything,
     height,
     if excluded_move.is_null() { hint_move.clone() } else { excluded_move.clone() }
   );
 
-  let mut best_score = i16::MIN + 1;
-  let mut best_move  = NULL_MOVE;
+  let mut best_score = LOWEST_SCORE;
+  let mut best_move  = Move::NULL;
 
   let mut successors   = 0;
   let mut raised_alpha = false;
   let mut last_raise   = 0;
 
-  let mut expected_child = match expected {
+  let mut next_expected = match expected {
     NodeKind::Unk => NodeKind::Unk,
     NodeKind::All => NodeKind::Cut,
     NodeKind::Cut => NodeKind::All,
@@ -342,16 +368,18 @@ fn main_search(
       state.apply(&hint_move);
       if state.in_check(!state.turn) {
         #[cfg(debug_assertions)] {
-          eprintln!("{}", state.to_fen());
-          eprintln!("hint move = {}", hint_move);
-          panic!("key collision or decode error");
+          eprintln!("key collision or decode error: illegal state");
+          eprintln!("  {}", state.to_fen());
+          eprintln!(
+            "  hint move = {}, src = {}, dst = {}",
+            hint_move, hint_move.src.algebraic(), hint_move.dst.algebraic()
+          );
+          eprintln!("  hint score = {:+} = {}", hint_score, format_score(hint_score));
         }
-        #[cfg(not(debug_assertions))] {
-          state.undo(&hint_move);
-          state.restore(&metadata);
-          hint_move = NULL_MOVE;
-          continue;
-        }
+        state.undo(&hint_move);
+        state.restore(&metadata);
+        hint_move = Move::NULL;
+        continue;
       }
       state.incheck = state.in_check(state.turn);
       // NOTE that givescheck is not set properly here (although gives_check may be
@@ -364,8 +392,8 @@ fn main_search(
 
       // Step 8b. Futility pruning (set up in step 6)
       if depth < 8
-        && alpha > LIKELY_LOSS
-        && lower_estimate != i16::MIN
+        && alpha > INEVITABLE_LOSS
+        && lower_estimate != INVALID_SCORE
         && lower_estimate + FP_OFFSET + (depth as i16)*FP_SCALE < alpha
       { futile = true; }
 
@@ -380,82 +408,70 @@ fn main_search(
     }
     successors += 1;
 
-    if expected == NodeKind::PV && raised_alpha { expected_child = NodeKind::Cut; }
+    if expected == NodeKind::PV && raised_alpha { next_expected = NodeKind::Cut; }
 
     context.state_history.push((state.key, mv.is_zeroing()));
 
-    let mut trace = if zerowind { IN_ZW } else { 0 };
-    let mut score;
-    loop {
+    let mut score = INVALID_SCORE;
+    let okay = loop {
       if successors > 1 {
         // Step 8c. Reduced-depth zero-window search
         if depth > 2 {
-          let mut reduction : i8 = 0;
+          let mut reduction : i16 = 0;
           if height > 0 && !mv.is_gainful() && successors > 3 {
             let moves_since_raise = (successors - last_raise) as f64;
             let mut r = LMR_BASE
                       + LMR_SCALE * ((depth-1) as f64).log2() * moves_since_raise.log2()
                       - HST_SCALE * (mv.score as f64);
             if !zerowind { r *= FW_RATIO; }
-            reduction = r.floor() as i8;
+            reduction = r.floor() as i16;
           }
           if reduction > 0 {
-            trace |= ZR;
-            let next_depth = std::cmp::max(0, depth as i8 - 1 - reduction) as u8;
-            score = -main_search(
-              state, next_depth, height+1, -alpha-1, -alpha, true,
-              expected_child, context, stats
+            let next_depth = std::cmp::max(0, depth as i16 - 1 - reduction) as u8;
+            let subscore = main_search(
+              state, next_depth, height+1, -alpha-1, -alpha,
+              true, next_expected, context
             );
-            if !(score > alpha) { trace |= ZR_OK; break; }
+            if subscore == INVALID_SCORE { break false; }
+            score = -subscore;
+            if !(score > alpha) { break true; }
           }
         }
         // Step 8d. Full-depth zero-window search (within a full-window search)
         if !zerowind {
-          trace |= ZF;
           let next_depth = depth - 1;
-          score = -main_search(
-            state, next_depth, height+1, -alpha-1, -alpha, true,
-            expected_child, context, stats
+          let subscore = main_search(
+            state, next_depth, height+1, -alpha-1, -alpha,
+            true, next_expected, context
           );
-          if !(score > alpha) { trace |= ZF_OK; break; }
+          if subscore == INVALID_SCORE { break false; }
+          score = -subscore;
+          if !(score > alpha) { break true; }
         }
       }
-      else {
-        trace |= FST;
-      }
+
       // Step 8e. Full-depth full-window search (within a full-window search) or
       //            zero-window search (within a zero-window search)
-      trace |= FF;
       let next_depth = if successors == 1 && extend_hint { depth } else { depth - 1 };
-      score = -main_search(
-        state, next_depth, height+1, -beta, -alpha, zerowind,
-        expected_child, context, stats
+      let subscore = main_search(
+        state, next_depth, height+1, -beta, -alpha,
+        zerowind, next_expected, context
       );
-      break;
-    }
-    debug_assert!(score != i16::MIN, "score was not set");
+      if subscore == INVALID_SCORE { break false; }
+      score = -subscore;
+      break true;
+    };
 
     // Step 8f. State restoration
     context.state_history.pop();
     state.undo(&mv);
     state.restore(&metadata);
 
-    // Step 8g. Tracing
-    match trace {
-      FULL_ETC_ZWRD           => { stats.full_etc_zwrd           += 1; }
-      FULL_ETC_ZWRD_ZWFD      => { stats.full_etc_zwrd_zwfd      += 1; }
-      FULL_ETC_ZWFD           => { stats.full_etc_zwfd           += 1; }
-      FULL_ETC_ZWRD_ZWFD_FWFD => { stats.full_etc_zwrd_zwfd_fwfd += 1; }
-      FULL_ETC_ZWFD_FWFD      => { stats.full_etc_zwfd_fwfd      += 1; }
-      FULL_FST_FWFD           => { stats.full_fst_fwfd           += 1; }
-      ZERO_ETC_ZWRD           => { stats.zero_etc_zwrd           += 1; }
-      ZERO_ETC_ZWRD_FWFD      => { stats.zero_etc_zwrd_fwfd      += 1; }
-      ZERO_ETC_FWFD           => { stats.zero_etc_fwfd           += 1; }
-      ZERO_FST_FWFD           => { stats.zero_fst_fwfd           += 1; }
-      _ => { panic!("unrecognized trace {:08b}", trace); }
-    }
+    if !okay { return INVALID_SCORE; }
 
-    // Step 8h. Folding
+    debug_assert!(score != INVALID_SCORE, "score was not set");
+
+    // Step 8g. Folding
     if score > best_score {
       best_score = score;
       best_move = mv.clone();
@@ -467,11 +483,11 @@ fn main_search(
       last_raise = successors;
     }
 
-    // Step 8i. Beta cutoff
+    // Step 8h. Beta cutoff
     if alpha >= beta {
       if !mv.is_gainful() {
         let killers = &mut context.killer_table[height as usize];
-        if !quick_eq(&mv, &killers.0) {
+        if !fast_eq(&mv, &killers.0) {
           killers.1 = (killers.0).clone();
           killers.0 = mv;
         }
@@ -507,27 +523,21 @@ fn main_search(
     //   artificially manipulate alpha and beta, we lose information and are unable to
     //   distinguish Cut nodes from PV nodes when alpha == beta.
     else if alpha == beta &&
-      (selector.stage != Stage::Done || best_score.abs() >= MINIMUM_PROVEN_MATE) { NodeKind::Cut }
+      (selector.stage != Stage::Done || best_score.abs() >= MINIMAL_PROVEN_MATE) { NodeKind::Cut }
     // The last case – this is actually a PV node.
     else { NodeKind::PV };
 
   // Step 11. Transposition table update
-  unsafe {
-    if ABORT && context.nominal > MINIMUM_DEPTH {
-      if kind == NodeKind::PV { context.pv[height as usize].insert(0, best_move); }
-      return best_score;
-    }
-  }
-
   if excluded_move.is_null() {
     let table_score =
-      if      best_score >= MINIMUM_PROVEN_MATE { best_score + height as i16 }
-      else if best_score <= MINIMUM_PROVEN_LOSS { best_score - height as i16 }
-      else                                      { best_score                 };
+      if      best_score >= MINIMAL_TB_MATE { best_score + height as i16 }
+      else if best_score <= MINIMAL_TB_LOSS { best_score - height as i16 }
+      else                                  { best_score                 };
 
     table_update(TableEntry {
-      key:        if state.dfz > 92 { state.key ^ state.dfz as u64 } else { state.key },
-      generation: unsafe { GENERATION as u16 },
+    //key:        if state.dfz > 92 { state.key ^ state.dfz as u64 } else { state.key },
+      key:        state.key,
+      generation: generation() as u16,
       hint_move:  best_move.compress(),
       hint_score: table_score,
       depth:      depth,
@@ -535,21 +545,7 @@ fn main_search(
     });
   }
 
-  // Step 12. Updating statistics
-  if selector.stage != Stage::GenerateMoves { stats.nodes_w_num_moves[selector.len()] += 1; }
-
-  if hint_move.is_null() {
-    stats.last_at_movenum_w_miss[successors as usize] += 1;
-    if kind == NodeKind::Cut { stats.cut_at_movenum_w_miss[successors as usize] += 1; }
-    if kind == NodeKind::PV  {  stats.pv_at_movenum_w_miss[last_raise as usize] += 1; }
-  }
-  else {
-    stats.last_at_movenum_w_hit[successors as usize] += 1;
-    if kind == NodeKind::Cut { stats.cut_at_movenum_w_hit[successors as usize] += 1; }
-    if kind == NodeKind::PV  {  stats.pv_at_movenum_w_hit[last_raise as usize] += 1; }
-  }
-
-  // Step 13. Returning
+  // Step 12. Returning
   if kind == NodeKind::PV { context.pv[height as usize].insert(0, best_move); }
   return best_score;
 }
@@ -562,15 +558,13 @@ fn support(
   history   : Vec<(u64, bool)>,
 )
 {
-  let statistics = unsafe { &mut STATISTICS[thread_id] };
-  let context    = unsafe { &mut    CONTEXT[thread_id] };
-  statistics.reset();
+  let context = unsafe { &mut GLOB.context[thread_id] };
   context.reset();
   context.state_history = history;
 
-  let mut score = resolving_search(&mut state, 0, 0, i16::MIN+1, i16::MAX, context, statistics);
+  let mut score = resolving_search(&mut state, 0, 0, LOWEST_SCORE, HIGHEST_SCORE, context);
 
-  'iterative_deepening: for step in 1..65 {
+  'iterative_deepening: for step in 1..((MAX_DEPTH+1) as u8) {
     let jitter = ((thread_id % 4) + 1) as f64 * 62.5;
     let relax = 250.0 + jitter;
     let tight = (25.0 + (score.abs() as f64)*0.25).min(100.0);
@@ -583,15 +577,14 @@ fn support(
     let mut searching = true;
     let mut tentative = score;
     while searching {
-      let alpha = if alpha_failures >= 2 { i16::MIN+1 } else { score - alpha_width };
-      let  beta = if  beta_failures >= 2 { i16::MAX   } else { score +  beta_width };
+      let alpha = if alpha_failures >= 2 {  LOWEST_SCORE } else { score - alpha_width };
+      let  beta = if  beta_failures >= 2 { HIGHEST_SCORE } else { score +  beta_width };
       context.nominal = step;
       tentative = main_search(
-        &mut state, step, 0, alpha, beta, false, NodeKind::PV, context, statistics
+        &mut state, step, 0, alpha, beta, false, NodeKind::PV, context
       );
-      unsafe {
-        if ABORT { break 'iterative_deepening; }
-      }
+      if abort() { break 'iterative_deepening; }
+      debug_assert!(tentative != INVALID_SCORE);
       searching = tentative >= beta || alpha >= tentative;
       if alpha >= tentative { alpha_failures += 1; alpha_width *= 2; }
       if tentative >= beta  {  beta_failures += 1;  beta_width *= 2; }
@@ -601,32 +594,35 @@ fn support(
 }
 
 fn best_move(
-  mut state : State,
-  history   : Vec<(u64, bool)>,
-  limits    : Limits,
+  supervisor : std::thread::Thread,
+  mut state  : State,
+  history    : Vec<(u64, bool)>,
+  limits     : Limits,
 )
 {
+  // ↓↓↓ DEBUG ↓↓↓
+  // unsafe { crate::apply::KING_MOVES  = 0; }
+  // unsafe { crate::apply::RESET_COUNT = 0; }
+  // ↑↑↑ DEBUG ↑↑↑
+
   // Setup
 
-  let statistics = unsafe { &mut STATISTICS[0] };
-  let context    = unsafe { &mut    CONTEXT[0] };
-  statistics.reset();
+  let context = unsafe { &mut GLOB.context[0] };
   context.reset();
   context.state_history = history;
 
   let mut prev_time_to_depth = 0.0;
   let mut ratios = [1.5, 1.5, 1.5, 1.5];
-  let mut last_best = NULL_MOVE;
+  let mut last_best = Move::NULL;
   let mut stability = 0;
-  let mut wgt_stbly : u16 = 0;
-  let mut wgt_actv  : u16 = 0;
 
   let mut last_step = 0;
   let mut last_pv;
   let mut last_score;
   let mut score =
-    resolving_search(&mut state, 0, 0, i16::MIN+1, i16::MAX, context, statistics);
-  let mut best = NULL_MOVE;
+    resolving_search(&mut state, 0, 0, LOWEST_SCORE, HIGHEST_SCORE, context);
+  let mut best = Move::NULL;
+  let mut no_change = false;
 
   // Iterative deepening loop
 
@@ -648,72 +644,70 @@ fn best_move(
     let mut searching = true;
     let mut tentative = score;
     while searching {
-      let alpha = if alpha_failures >= 2 { i16::MIN+1 } else { score - alpha_width };
-      let  beta = if  beta_failures >= 2 { i16::MAX   } else { score +  beta_width };
+      let alpha = if alpha_failures >= 2 {  LOWEST_SCORE } else { score - alpha_width };
+      let  beta = if  beta_failures >= 2 { HIGHEST_SCORE } else { score +  beta_width };
       context.nominal = step;
       tentative = main_search(
-        &mut state, step, 0, alpha, beta, false, NodeKind::PV, context, statistics
+        &mut state, step, 0, alpha, beta, false, NodeKind::PV, context
       );
-      unsafe {
-        if ABORT && step > MINIMUM_DEPTH { break 'iterative_deepening; }
-      }
+      if abort() && step > MINIMUM_DEPTH { break 'iterative_deepening; }
+      debug_assert!(tentative != INVALID_SCORE);
       searching = tentative >= beta || alpha >= tentative;
       if alpha >= tentative { alpha_failures += 1; alpha_width *= 2; }
       if tentative >= beta  {  beta_failures += 1;  beta_width *= 2; }
     }
     last_score = score;
     score = tentative;
-    best = if context.pv[0].is_empty() { NULL_MOVE } else { context.pv[0][0].clone() };
+    if !context.pv[0].is_empty() { best = context.pv[0][0].clone(); }
     last_step = step;
     let time_to_depth = clock.elapsed().as_secs_f64();
 
-    if quick_eq(&best, &last_best) {
-      stability += 1;
-      wgt_stbly += step as u16;
-    }
-    else {
-      stability = 1;
-      wgt_stbly = step as u16;
-      wgt_actv += step as u16;
-    };
+    stability = if fast_eq(&best, &last_best) { stability + 1 } else { 1 };
     last_best = best.clone();
 
     // Part 2. Report to stderr and stdout
 
     let mut ext_depth = 0;
-    for x in 0..128 { if statistics.r_nodes_at_height[x] != 0 { ext_depth = x; } }
+    for x in 0..MAX_HEIGHT { if context.r_nodes_at_height[x] != 0 { ext_depth = x; } }
 
-    let mut nodes = 0;
+    let mut nodes  = 0;
+    let mut tbhits = 0;
     unsafe {
-      let num_threads = NUM_THREADS;
+      let num_threads = num_threads();
       for id in 0..num_threads {
         // These values might be slightly out of date, but we don't mind
-        nodes += STATISTICS[id].m_nodes_at_height.iter().sum::<usize>();
-        nodes += STATISTICS[id].r_nodes_at_height.iter().sum::<usize>();
+        nodes  += GLOB.context[id].m_nodes_at_height.iter().sum::<usize>();
+        nodes  += GLOB.context[id].r_nodes_at_height.iter().sum::<usize>();
+        tbhits += GLOB.context[id].tb_hits;
       }
     }
 
     let nps = nodes as f64 / time_to_depth;
 
     if isatty(STDERR) {
-      if score == last_score && context.pv[0] == last_pv {
-        eprint!("{:>2}\r", step);
+      if no_change { eprint!("\x1B[A\x1B[K"); }
+      no_change = score == last_score && context.pv[0] == last_pv;
+      let rectified = if state.turn == Black { -score } else { score };
+      eprint!(
+        "{:3} \x1B[2m{}/{}\x1B[22m {} \x1B[2m{}\x1B[22m",
+        step, alpha_failures, beta_failures,
+        format_time(time_to_depth), format_node_compact(nodes)
+      );
+      if syzygy_enabled() {
+        eprint!(" \x1B[2m{}\x1B[22m", format_node_compact(tbhits));
       }
-      else {
-        let rectified = if state.turn == Color::Black { -score } else { score };
-        eprint!(
-          "{:2} \x1B[2m{}/{}\x1B[22m {:6.3} \x1B[2m{:6}\x1B[22m \x1B[1m{:>6}\x1B[22m",
-          step, alpha_failures, beta_failures,
-          time_to_depth, nodes / 1000, format_score(rectified)
-        );
-        for mv in context.pv[0].iter() { eprint!(" {}", mv); }
-        eprint!("\n");
+      eprint!(" \x1B[1m{:>6}\x1B[22m", format_score(rectified));
+      let mut scratch = state.clone_empty();
+      for mv in context.pv[0].iter() {
+        eprint!(" {}", mv.in_context(&scratch));
+        scratch.apply(mv);
       }
+      eprint!("\n");
     }
     if !isatty(STDOUT) || !isatty(STDERR) {
       print!(
-        "info depth {} seldepth {} nodes {} time {:.0} nps {:.0} score {}",
-        step, ext_depth+1, nodes, time_to_depth * 1000.0, nps, format_uci_score(score)
+        "info depth {} seldepth {} nodes {} tbhits {} time {:.0} nps {:.0} score {}",
+        step, ext_depth+1, nodes, tbhits, time_to_depth * 1000.0, nps, format_uci_score(score)
       );
       if !context.pv[0].is_empty() {
         print!(" multipv 1 pv");
@@ -729,7 +723,7 @@ fn best_move(
       // We don't break above when step = MINIMUM_DEPTH so that we can write info,
       //   but with that out of the way, we need to break now
 
-      unsafe { if ABORT { break; } }
+      if abort() { break; }
 
       // Decide whether to stop early if we're given a target (soft limit)
 
@@ -763,17 +757,6 @@ fn best_move(
           if estimate > hard_limit && stability > 1 { break; }
         }
 
-        let downfactor =
-          if stability == 1       { 1.5 }
-          else if wgt_stbly <  30 { 1.0 }
-          else if wgt_stbly < 230 { 1.0 - 0.004 * (wgt_stbly - 30) as f64 }
-          else                    { 0.2 };
-        let upfactor =
-          if      wgt_actv < 10 { 1.0 }
-          else if wgt_actv < 60 { 1.0 + 0.02 * (wgt_actv - 10) as f64 }
-          else                  { 2.0 };
-        let target = target * upfactor * downfactor;
-
         if estimate - target > target - time_to_depth { break; }
       }
     }
@@ -781,56 +764,66 @@ fn best_move(
 
   // Report final summary and bestmove
 
-  let duration = clock.elapsed().as_secs_f64();
+  let elapsed = clock.elapsed().as_secs_f64();
 
   let mut main_depth = 0;
   let mut  ext_depth = 0;
-  for x in 0..128 { if statistics.m_nodes_at_height[x] != 0 { main_depth = x; } }
-  for x in 0..128 { if statistics.r_nodes_at_height[x] != 0 {  ext_depth = x; } }
+  for x in 0..MAX_HEIGHT { if context.m_nodes_at_height[x] != 0 { main_depth = x; } }
+  for x in 0..MAX_HEIGHT { if context.r_nodes_at_height[x] != 0 {  ext_depth = x; } }
 
   let mut m_nodes = 0;
   let mut r_nodes = 0;
   let mut leaves  = 0;
   unsafe {
-    let num_threads = NUM_THREADS;
+    let num_threads = num_threads();
     for id in 0..num_threads {
       // These values might be slightly out of date, but we don't mind
-      m_nodes += STATISTICS[id].m_nodes_at_height.iter().sum::<usize>();
-      r_nodes += STATISTICS[id].r_nodes_at_height.iter().sum::<usize>();
-      leaves  += STATISTICS[id].r_nodes_at_length[0];
+      m_nodes += GLOB.context[id].m_nodes_at_height.iter().sum::<usize>();
+      r_nodes += GLOB.context[id].r_nodes_at_height.iter().sum::<usize>();
+      leaves  += GLOB.context[id].r_nodes_at_length[0];
     }
   }
 
   let nodes = m_nodes + r_nodes;
-  let nps = nodes as f64 / duration;
+  let nps = nodes as f64 / elapsed;
 
   if isatty(STDERR) {
-    eprintln!("depth {}/{}/{}", last_step, main_depth+1, ext_depth+1);
+    eprintln!("  depth {}/{}/{}", last_step, main_depth+1, ext_depth+1);
     eprintln!(
-      "\x1B[2m{:6} knode main {:2.0}%\x1B[22m",
-      m_nodes / 1000, m_nodes as f64 * 100.0 / nodes as f64
+      "   \x1B[2m{}node main {:2.0}%\x1B[22m",
+      format_node(m_nodes), m_nodes as f64 * 100.0 / nodes as f64
     );
     eprintln!(
-      "\x1B[2m{:6} knode leaf {:2.0}%\x1B[22m",
-      leaves / 1000, leaves as f64 * 100.0 / nodes as f64
+      "   \x1B[2m{}node leaf {:2.0}%\x1B[22m",
+      format_node(leaves), leaves as f64 * 100.0 / nodes as f64
     );
     eprintln!(
-      "\x1B[2m{:6} knode extn {:2.0}%\x1B[22m",
-      (r_nodes-leaves) / 1000, (r_nodes-leaves) as f64 * 100.0 / nodes as f64
+      "   \x1B[2m{}node extn {:2.0}%\x1B[22m",
+      format_node(r_nodes - leaves), (r_nodes - leaves) as f64 * 100.0 / nodes as f64
     );
-    eprintln!("{:6} knode", nodes / 1000);
-    eprintln!("{:6.0} knode/s", nps / 1000.0);
-    let num_threads = unsafe { NUM_THREADS };
-    if num_threads > 1 { eprintln!("{:6.0} kn/s/th", nps / (num_threads as f64) / 1000.0); }
-    eprintln!("{:6.3} seconds", duration);
+    eprintln!("   {}node", format_node(nodes));
+    eprintln!("   {}node/s", format_node(nps as usize));
+    let num_threads = num_threads();
+    if num_threads > 1 {
+      eprintln!("   {}nps/th", format_node((nps / num_threads as f64) as usize));
+    }
+    eprintln!(
+      " {} {}",
+      format_time(elapsed), if elapsed < 60.0 { "seconds" } else { "elapsed" }
+    );
   }
   if !isatty(STDOUT) || !isatty(STDERR) {
     println!("bestmove {}", best.algebraic());
   }
 
+  // ↓↓↓ DEBUG ↓↓↓
+  // unsafe { eprintln!("{:5.2}%", crate::apply::KING_MOVES  as f64 * 100.0 / nodes as f64); }
+  // unsafe { eprintln!("{:5.2}%", crate::apply::RESET_COUNT as f64 * 100.0 / nodes as f64); }
+  // ↑↑↑ DEBUG ↑↑↑
+
   // Stop the search if it hasn't been stopped already
 
-  unsafe { if !ABORT { ABORT = true; if let Some(thread) = &SUPERVISOR { thread.unpark(); } } }
+  if !abort() { set_abort(true); supervisor.unpark(); }
 }
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
@@ -842,34 +835,28 @@ fn supervise(
   num_threads : usize,
 )
 {
-  unsafe {
-    SUPERVISOR  = Some(std::thread::current());
-    NUM_THREADS = num_threads;
-  }
+  set_num_threads(num_threads);
 
   let time_limit = limits.cutoff;
   let clock = Instant::now();
 
   unsafe {
-    if CONTEXT.len() < num_threads {
-      let deficit = num_threads - CONTEXT.len();
-      for _ in 0..deficit { CONTEXT.push(Context::new()); }
+    if GLOB.context.len() < num_threads {
+      let deficit = num_threads - GLOB.context.len();
+      for _ in 0..deficit { GLOB.context.push(Context::new()); }
     }
-    if STATISTICS.len() < num_threads {
-      let deficit = num_threads - STATISTICS.len();
-      for _ in 0..deficit { STATISTICS.push(Statistics::new()); }
-    }
-    ABORT = false;
   }
+  set_abort(false);
 
   let mut handles = Vec::new();
   {
+    let supervisor = std::thread::current();
     let state = state.clone();
     let history = history.clone();
     handles.push(
       std::thread::Builder::new()
         .name(String::from("search.0"))
-        .spawn(move || { best_move(state, history, limits); })
+        .spawn(move || { best_move(supervisor, state, history, limits); })
         .unwrap()
     );
   }
@@ -888,62 +875,46 @@ fn supervise(
 
   if let Some(stop_time) = time_limit {
     loop {
-      unsafe {
-        let time_to_go = stop_time - clock.elapsed().as_secs_f64();
-        if !(time_to_go > 0.0) {
-          ABORT = true;
-          break;
-        }
-        std::thread::park_timeout(Duration::from_secs_f64(time_to_go));
-        if ABORT { break; }
+      let time_to_go = stop_time - clock.elapsed().as_secs_f64();
+      if !(time_to_go > 0.0) {
+        set_abort(true);
+        break;
       }
+      std::thread::park_timeout(Duration::from_secs_f64(time_to_go));
+      if abort() { break; }
     }
   }
 
   for h in handles { h.join().expect("unable to join search thread"); }
 
-  unsafe {
-    for id in 0..num_threads { GLOBAL_STATISTICS.add(&STATISTICS[id]); }
-    SEARCH_IN_PROGRESS = false;
-  }
+  set_searching(false);
 }
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-// These three remaining methods are called only by the main thread
-//   (managing the UCI interface) and so can never be running concurrently.
-
-pub fn search_in_progress() -> bool { return unsafe { SEARCH_IN_PROGRESS }; }
+// These two remaining methods are called only by the main thread (managing the UCI interface)
+//   and so can never be running concurrently.
 
 pub fn start_search(
   state       : &State,
   history     : &Vec<(u64, bool)>,
   limits      : Limits,
   num_threads : usize,
-)
+) -> std::thread::JoinHandle<()>
 {
   let num_threads = std::cmp::max(num_threads, 1);
-  unsafe {
-    GENERATION += 1;
-    SEARCH_IN_PROGRESS = true;
-  }
+  increment_generation();
+  set_searching(true);
   let state = state.clone();
   let history = history.clone();
-  std::thread::Builder::new()
+  return std::thread::Builder::new()
     .name(String::from("supervisor"))
     .spawn(move || { supervise(state, history, limits, num_threads); })
     .unwrap();
 }
 
-// NOTE there are two possible race conditions while using stop: first, the supervisor has been
-//   started but has not parked yet. This will not break the program but means the search will
-//   not be stopped.
-//
-//   Second, SUPERVISOR is already set to Some(...), but the current supervisor has not yet set
-//   SUPERVISOR to itself (and so we're grabbing the previous supervisor). I don't believe this
-//   will break the program, but it means the search will not be stopped.
-//
-pub fn stop_search()
+pub fn stop_search(handle : &std::thread::JoinHandle<()>)
 {
-  unsafe { ABORT = true; if let Some(thread) = &SUPERVISOR { thread.unpark(); } }
+  set_abort(true);
+  handle.thread().unpark();
 }
