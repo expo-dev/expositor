@@ -39,20 +39,26 @@ self-worth in any way (nor is any certain indicator of how the future will be).
 _Updated January 2024_
 
 It’s been over a year since the last release, but Expositor hasn’t been
-abandoned. Since the last release, four major projects have been completed:
+abandoned. Since the last release, three major projects have been completed:
 
 - her value network has been improved by contextually switching out the first
 layer (depending on the locations of the kings) and second layer (depending on
 the material on the board),
 
 - many of her core types have been rewritten and the correctness of her code
-has been improved,[^1]
-
-- training data is now stored in a bespoke format (the “quick” format) that is
-smaller and faster to deserialize, and
+has been improved,[^1] and
 
 - she now has a self-play routine, obviating the need for any external tools or
 opening books to generate training data.
+
+Other changes include:
+
+- a bespoke format for training data (the “quick” format) that is
+smaller and faster to deserialize,
+
+- support for transposition table sizes besides powers of two, and
+
+- support for setting processor affinity for search threads.
 
 I also relented and decided to include Syzygy support through the use of the
 Fathom library, since it’s a valuable feature and I won’t get around to writing
@@ -62,13 +68,10 @@ The current version of Expositor is not much stronger than 2BR17 at standard
 chess, but ought to be significantly stronger at
 [chess 324](https://talkchess.com/forum3/viewtopic.php?f=2&t=80482).
 
-There are five features in progress:
-
-- support for huge pages and setting processor affinity (which may improve
-performance on Linux systems),[^2]
+There are four features in progress:
 
 - an alternative evaluator (along the lines of an HCE) from which her NNUE will
-be re-bootstrapped,[^3]
+be re-bootstrapped,[^2]
 
 - the quantization of her NNUE,
 
@@ -90,10 +93,7 @@ to allow). Besides atomic objects, synchronization is established for objects
 passed to threads when they are spawned and objects returned by threads when
 they are reaped, and insofar as I’m aware, that’s it.]
 
-[^2]: These are actually complete, but I’ve not yet integrated the changes into
-the engine.
-
-[^3]: There are particular goals and constraints that I have for the alternative
+[^2]: There are particular goals and constraints that I have for the alternative
 evaluator and, since I expect that I won’t ever touch the evaluator again after
 I’ve finished it, I want to get it right. I’ve started over multiple times and
 thrown away most of what I’ve written, and I’ve lost count of the number of
@@ -197,9 +197,9 @@ where $h$ is the height (the distance from the root of the search tree) clipped
 to the range $0$ to $32$.-->
 
 I’m planning to replace the current scheme with an idea I had inspired by the
-GEHL and TAGE branch predictors.[^4]
+GEHL and TAGE branch predictors.[^3]
 
-[^4]: See [this paper](https://jilp.org/cbp/Andre.pdf) and
+[^3]: See [this paper](https://jilp.org/cbp/Andre.pdf) and
 [this paper](https://jilp.org/vol8/v8paper1.pdf).
 
 I’ve tried introducing countermove, follow-up, and capture history tables, but
@@ -211,15 +211,15 @@ again some time.
 Note that, in the source, this is currently called the “resolving” search,
 since its purpose is to resolve tactical sequences. The “length” of a node in
 a quiescing search tree is the distance from the root of that quiescing search
-(increasing by 1 per ply).[^5][^6]
+(increasing by 1 per ply).[^4][^5]
 
-[^5]: The “height“ of a node in the main search tree or in a quiescing search
+[^4]: The “height“ of a node in the main search tree or in a quiescing search
 tree is the distance from the root of the _main_ search. So if the root of a
 quiescing search (with length 0, by definition) has height 17, then a node
 within that quiescing search tree with length 2 would have height 17 + 2 = 19.
 Like length, height always increases by 1 per ply.
 
-[^6]: The “depth” of a node is a fairly arbitrary number that usually
+[^5]: The “depth” of a node is a fairly arbitrary number that usually
 decreases by 1 per ply along the principal variation (and by a greater amount
 along other lines). Depth is only defined for nodes in the main search tree
 (just as length is only defined for nodes in a quiescing search tree).
@@ -427,16 +427,16 @@ the SPSA optimizer used to tune Expositor’s search constants.
 At one point, I was working on a better [specification of the Universal Chess
 Interface](https://expositor.dev/pdf/uci-2022-12-29.pdf). Several people were
 supportive (and I’m very grateful for that – thank you!) but there were also
-some very discouraging responses, enough so that I put it aside.[^7]
+some very discouraging responses, enough so that I put it aside.[^6]
 
-[^7]: I may eventually pick this up again and publish a second draft. If you
+[^6]: I may eventually pick this up again and publish a second draft. If you
 have any comments on the first draft, I’d love to hear them; please send an
 email to uci@expositor.dev.
 
 ## Releases
 
 If you know the microarchitecture of your processor, try using a binary from the
-appropriate `specific` directory of a release archive.[^8][^9] If you don’t know
+appropriate `specific` directory of a release archive.[^7][^8] If you don’t know
 the microarchitecture of your processor but you do know which features it
 supports, try using a binary from the appropriate `generic` directory of a
 release archive. See the [file named `extensions.md`](extensions.md) in this
@@ -446,10 +446,10 @@ features they support.
 The binaries include the default network, so you do not need to download a
 separate copy.
 
-[^8]: I’m not completely confident that I matched the proper cpu-target for some
+[^7]: I’m not completely confident that I matched the proper cpu-target for some
 AMD microarchitectures; please let me know if I’ve made any mistakes.
 
-[^9]: I’ve attempted to include binaries for most consumer desktop hardware but
+[^8]: I’ve attempted to include binaries for most consumer desktop hardware but
 not server or mobile platforms. If you have an Epyc, Xeon, or Atom processor,
 for example, and want a targeted binary, you’ll need to compile from source.
 Feel free to reach out to me for help or if you’d like me to include a binary
