@@ -2,7 +2,7 @@
 
 use std::ops::{Add, Sub, Mul, AddAssign, SubAssign, MulAssign};
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Pair32 {
   pub value : i64
 }

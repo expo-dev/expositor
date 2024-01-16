@@ -17,6 +17,7 @@ use crate::state::State;
 use crate::syzygy::{syzygy_support, probe_syzygy_wdl};
 use crate::tablebase::probe_3man;
 use crate::util::{STDOUT, STDERR, isatty};
+use crate::util::{AFFINITY, Affinity, assign_core, set_affinity};
 
 use std::time::{Instant, Duration};
 
@@ -534,7 +535,7 @@ pub fn main_search(
       else if best_score <= MINIMAL_TB_LOSS { best_score - height as i16 }
       else                                  { best_score                 };
 
-    table_update(TableEntry {
+    table_update(&TableEntry {
     //key:        if state.dfz > 92 { state.key ^ state.dfz as u64 } else { state.key },
       key:        state.key,
       generation: generation() as u16,
@@ -554,10 +555,13 @@ pub fn main_search(
 
 fn support(
   thread_id : usize,
+  core      : isize,
   mut state : State,
   history   : Vec<(u64, bool)>,
 )
 {
+  if !(core < 0) { set_affinity(core as usize); }
+
   let context = unsafe { &mut GLOB.context[thread_id] };
   context.reset();
   context.state_history = history;
@@ -595,6 +599,7 @@ fn support(
 
 fn best_move(
   supervisor : std::thread::Thread,
+  core       : isize,
   mut state  : State,
   history    : Vec<(u64, bool)>,
   limits     : Limits,
@@ -604,6 +609,8 @@ fn best_move(
   // unsafe { crate::apply::KING_MOVES  = 0; }
   // unsafe { crate::apply::RESET_COUNT = 0; }
   // ↑↑↑ DEBUG ↑↑↑
+
+  if !(core < 0) { set_affinity(core as usize); }
 
   // Setup
 
@@ -833,6 +840,7 @@ fn supervise(
   history     : Vec<(u64, bool)>,
   limits      : Limits,
   num_threads : usize,
+  affinity    : Affinity
 )
 {
   set_num_threads(num_threads);
@@ -851,23 +859,25 @@ fn supervise(
   let mut handles = Vec::new();
   {
     let supervisor = std::thread::current();
+    let core = assign_core(&affinity, 0);
     let state = state.clone();
     let history = history.clone();
     handles.push(
       std::thread::Builder::new()
         .name(String::from("search.0"))
-        .spawn(move || { best_move(supervisor, state, history, limits); })
+        .spawn(move || { best_move(supervisor, core, state, history, limits); })
         .unwrap()
     );
   }
   if num_threads > 1 {
     for id in 1..num_threads {
+      let core = assign_core(&affinity, id);
       let state = state.clone();
       let history = history.clone();
       handles.push(
         std::thread::Builder::new()
           .name(format!("search.{}", id))
-          .spawn(move || { support(id, state, history); })
+          .spawn(move || { support(id, core, state, history); })
           .unwrap()
       );
     }
@@ -903,13 +913,14 @@ pub fn start_search(
 ) -> std::thread::JoinHandle<()>
 {
   let num_threads = std::cmp::max(num_threads, 1);
+  let affinity = unsafe { AFFINITY };
   increment_generation();
   set_searching(true);
   let state = state.clone();
   let history = history.clone();
   return std::thread::Builder::new()
     .name(String::from("supervisor"))
-    .spawn(move || { supervise(state, history, limits, num_threads); })
+    .spawn(move || { supervise(state, history, limits, num_threads, affinity); })
     .unwrap();
 }
 

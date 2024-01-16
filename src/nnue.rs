@@ -13,6 +13,16 @@ use std::io::{Read, Write, BufWriter, Error};
 use std::mem::MaybeUninit;
 use std::simd::Simd;
 
+struct Guard<const B : bool> { }
+impl <const B : bool> Guard<B> {
+  const CHECK : () = assert!(B);
+  fn assert() { let _ = Self::CHECK; }
+}
+
+macro_rules! static_assert {
+  ($cond:expr) => { Guard::<{$cond}>::assert(); }
+}
+
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 // The Expositor NNUE has 768 inputs, two hidden layers, and a single output neuron. For the
@@ -124,7 +134,9 @@ pub struct Network {
   pub hd : [NetworkHead; HEADS],
 }
 
-pub static mut NETWORK : Network = DEFAULT_NETWORK;
+fn static_assert_block() { static_assert!(SIZE == std::mem::size_of::<Network>()); }
+
+pub static mut NETWORK : Network = unsafe { std::mem::transmute(*DEFAULT_NETWORK) };
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
@@ -235,6 +247,14 @@ impl Network {
     w.write_all("EXPO".as_bytes())?;
     w.write_all(bytes)?;
     w.write_all(&self.checksum().to_le_bytes())?;
+    return Ok(());
+  }
+
+  pub fn save_default(&self) -> std::io::Result<()>
+  {
+    let mut w = BufWriter::new(File::create("default.nnue")?);
+    let bytes = unsafe { std::mem::transmute::<_,&[u8; SIZE*4]>(self) };
+    w.write_all(bytes)?;
     return Ok(());
   }
 
@@ -538,139 +558,6 @@ impl Network {
     let status = std::process::Command::new("convert")
       .arg(&format!("{}.ppm", file)).arg(&format!("{}.png", file)).status()?;
     if status.success() { std::fs::remove_file(format!("{}.ppm", file))?; }
-    return Ok(());
-  }
-
-  pub fn save_source(&self, file : &str) -> std::io::Result<()>
-  {
-    let mut w = BufWriter::new(File::create(file)?);
-    writeln!(&mut w, "use crate::nnue::{{Network, NetworkBody, NetworkHead}};")?;
-    writeln!(&mut w, "")?;
-    writeln!(&mut w, "pub const DEFAULT_NETWORK : Network = Network {{")?;
-
-    writeln!(&mut w, "  rn: [")?;
-    for r in 0..REGIONS {
-      writeln!(&mut w, "    NetworkBody {{")?;
-
-      let region = &self.rn[r];
-
-      // Input → Layer 1 Weights
-      writeln!(&mut w, "      w1: [")?;
-      for c in 0..2 {
-        writeln!(&mut w, "        [")?;
-        for x in 0..Np {
-          write!(&mut w, "          [")?;
-          for n in 0..N1 {
-            if n > 0 && n % 4 == 0 { write!(&mut w, "\n           ")?; }
-            let a = region.w1[c][x][n];
-            if 10.0 > a.abs() && a.abs() >= 0.01 {
-              write!(&mut w, " {:16.13},", a)?;
-            }
-            else {
-              write!(&mut w, " {:16.10e},", a)?;
-            }
-          }
-          writeln!(&mut w, " ],")?;
-        }
-        writeln!(&mut w, "        ],")?;
-      }
-      writeln!(&mut w, "      ],")?;
-
-      // Layer 1 Biases
-      writeln!(&mut w, "      b1: [")?;
-      write!(&mut w, "         ")?;
-      for n in 0..N1 {
-        if n > 0 && n % 4 == 0 { write!(&mut w, "\n         ")?; }
-        let a = region.b1[n];
-        if 10.0 > a.abs() && a.abs() >= 0.01 {
-          write!(&mut w, " {:16.13},", a)?;
-        }
-        else {
-          write!(&mut w, " {:16.10e},", a)?;
-        }
-      }
-      write!(&mut w, "\n")?;
-      writeln!(&mut w, "      ],")?;
-      writeln!(&mut w, "    }},")?;
-    }
-    writeln!(&mut w, "  ],")?;
-
-    writeln!(&mut w, "  hd: [")?;
-    for h in 0..HEADS {
-      writeln!(&mut w, "    NetworkHead {{")?;
-
-      let head = &self.hd[h];
-
-      // Layer 1 → Layer 2 Weights
-      writeln!(&mut w, "      w2: [")?;
-      for n in 0..N2 {
-        writeln!(&mut w, "        [")?;
-        for c in 0..2 {
-          write!(&mut w, "          [")?;
-          for x in 0..N1 {
-            if x > 0 && x % 4 == 0 { write!(&mut w, "\n           ")?; }
-            let a = head.w2[n][c][x];
-            if 10.0 > a.abs() && a.abs() >= 0.01 {
-              write!(&mut w, " {:16.13},", a)?;
-            }
-            else {
-              write!(&mut w, " {:16.10e},", a)?;
-            }
-          }
-          writeln!(&mut w, " ],")?;
-        }
-        writeln!(&mut w, "        ],")?;
-      }
-      writeln!(&mut w, "      ],")?;
-
-      // Layer 2 Biases
-      writeln!(&mut w, "      b2: [")?;
-      write!(&mut w, "         ")?;
-      for n in 0..N2 {
-        if n > 0 && n % 4 == 0 { write!(&mut w, "\n         ")?; }
-        let a = head.b2[n];
-        if 10.0 > a.abs() && a.abs() >= 0.01 {
-          write!(&mut w, " {:16.13},", a)?;
-        }
-        else {
-          write!(&mut w, " {:16.10e},", a)?;
-        }
-      }
-      write!(&mut w, "\n")?;
-      writeln!(&mut w, "      ],")?;
-
-      // Layer 2 → Layer 3 Weights
-      writeln!(&mut w, "      w3: [")?;
-      write!(&mut w, "         ")?;
-      for x in 0..N2 {
-        if x > 0 && x % 4 == 0 { write!(&mut w, "\n         ")?; }
-        let a = head.w3[x];
-        if 10.0 > a.abs() && a.abs() >= 0.01 {
-          write!(&mut w, " {:16.13},", a)?;
-        }
-        else {
-          write!(&mut w, " {:16.10e},", a)?;
-        }
-      }
-      write!(&mut w, "\n")?;
-      writeln!(&mut w, "      ],")?;
-
-      // Layer 3 Bias
-      writeln!(&mut w, "      b3:")?;
-      write!(&mut w, "         ")?;
-      let a = head.b3;
-      if 10.0 > a.abs() && a.abs() >= 0.01 {
-        writeln!(&mut w, " {:16.13},", a)?;
-      }
-      else {
-        writeln!(&mut w, " {:16.10e},", a)?;
-      }
-
-      writeln!(&mut w, "    }},")?;
-    }
-    writeln!(&mut w, "  ]")?;
-
-    write!(&mut w, "}};")?;
     return Ok(());
   }
 

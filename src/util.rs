@@ -1,20 +1,23 @@
 pub const VERSION : &str = env!("VERSION");
 pub const BUILD   : &str = env!("BUILD");
 
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
 pub const STDOUT : u64 = 1;
 pub const STDERR : u64 = 2;
 
 pub static mut STDOUT_ISATTY : Option<bool> = None;
 pub static mut STDERR_ISATTY : Option<bool> = None;
 
-#[allow(unused_variables)]
 pub fn isatty(fd : u64) -> bool
 {
-  #[cfg(target_os="linux")]
+  // Memoized to avoid making syscalls
   unsafe {
-    // Memoize to avoid making syscalls
     if fd == STDERR && STDERR_ISATTY.is_some() { return STDERR_ISATTY.unwrap(); }
     if fd == STDOUT && STDOUT_ISATTY.is_some() { return STDOUT_ISATTY.unwrap(); }
+  }
+  #[cfg(target_os="linux")]
+  unsafe {
     let ret : i64;
     let ioctl : u64 = 16;
     let tcgets : u64 = 0x5401;
@@ -42,12 +45,10 @@ pub fn isatty(fd : u64) -> bool
     return ret;
   }
   #[cfg(not(target_os="linux"))]
-  unsafe {
-    if fd == STDERR && STDERR_ISATTY.is_some() { return STDERR_ISATTY.unwrap(); }
-    if fd == STDOUT && STDOUT_ISATTY.is_some() { return STDOUT_ISATTY.unwrap(); }
-    return false;
-  }
+  return false;
 }
+
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 #[allow(unused_variables)]
 pub fn set_stacksize(bytes : u64) -> bool
@@ -73,14 +74,151 @@ pub fn set_stacksize(bytes : u64) -> bool
     return ret == 0;
   }
   #[cfg(not(target_os="linux"))]
-  { return false; }
+  return false;
 }
 
-// NOTE that this usually returns the number of logical (not physical) cores.
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+// NOTE that this typically returns the number of logical (not physical) cores.
 pub fn num_cores() -> usize
 {
-  return if let Ok(n) = std::thread::available_parallelism() { n.get() } else { 1 };
+  use std::thread::available_parallelism;
+  return if let Ok(n) = available_parallelism() { n.get() } else { 1 };
 }
+
+fn cpu0_sibling() -> isize
+{
+  let p = "/sys/devices/system/cpu/cpu0/topology/thread_siblings_list";
+  let s = match std::fs::read_to_string(p) { Ok(r) => r, Err(_) => return -1 };
+  let t = s.trim().split(',').collect::<Vec<&str>>();
+  if t.len() != 2 { return -1; }
+  let a = match t[0].parse::<usize>() { Ok(n) => n, Err(_) => return -1 };
+  let b = match t[1].parse::<usize>() { Ok(n) => n, Err(_) => return -1 };
+  if a != 0 { return -1; }
+  if b == 0 { return -1; }
+  return b as isize;
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Affinity {
+  Scheduler,          // Leave thread assignments to the OS scheduler
+  Contiguous(usize),  // Assign threads contiguously b/c SMT pairs are (0, N), (1, N+1), ...
+  Alternating(usize), // Assign threads alternatingly b/c SMT pairs are (0, 1), (2, 3), ...
+}
+
+pub fn assign_core(affinity : &Affinity, id : usize) -> isize
+{
+  return match affinity {
+    Affinity::Scheduler      => -1,
+    Affinity::Contiguous(n)  => if id < *n { id as isize } else { -1 },
+    Affinity::Alternating(n) => if id < *n { ((id*2 % n) + (id*2 / n)) as isize } else { -1 }
+  };
+}
+
+pub static mut AFFINITY : Affinity = Affinity::Scheduler;
+
+pub fn get_affinity()
+{
+  #[cfg(not(target_os="linux"))] return;
+
+  // Step 1. Get the mask of available processors
+
+  let mut mask : [u64; 16] = [0; 16];
+  unsafe {
+    let ret : i64;
+    let getaffinity : u64 = 204;
+    let pid         : u64 = 0;
+    let cpusetsize  : u64 = 128;
+
+    std::arch::asm!(
+      "syscall"
+      , inout("rax") getaffinity => ret
+      ,    in("rdi") pid
+      ,    in("rsi") cpusetsize
+      ,    in("rdx") &mut mask
+      ,   out("r10") _
+      ,   out("r8" ) _
+      ,   out("r9" ) _
+      ,   out("rcx") _
+      ,   out("r11") _
+    );
+    // The return value is the number of bytes written into the
+    //   mask buffer, which is the minimum of cpusetsize and the
+    //   size of mask data type used internally by the kernel.
+    if ret < 0 { return; }
+  }
+
+  // Step 2. Count the number of processors
+  //   and ensure they are contiguous from zero
+
+  let mut carry = true;
+  for x in 0..8 { (mask[x], carry) = mask[x].carrying_add(0, carry); }
+
+  let mut popcnt = 0;
+  for x in 0..16 { popcnt += mask[x].count_ones(); }
+  if popcnt != 1 { return; }
+
+  let mut num_proc = 0;
+  for x in 0..16 {
+    if mask[x] == 0 { num_proc += 64; }
+    else { num_proc += mask[x].trailing_zeros() as usize; break; }
+  }
+  if num_proc == 0 { return; }
+
+  // Step 3. Special cases
+
+  if num_proc & 1 != 0 { return; }
+
+  if num_proc == 1 { return; }
+  if num_proc == 2 { return; }
+
+  // Step 4. Determine the numbering of SMT threads
+
+  let coremate = cpu0_sibling();
+  if !(coremate > 0) { return; }
+  let coremate = coremate as usize;
+
+  if coremate == num_proc / 2 {
+    unsafe { AFFINITY = Affinity::Contiguous(num_proc); }
+  }
+  else if coremate == 1 {
+    unsafe { AFFINITY = Affinity::Alternating(num_proc); }
+  }
+}
+
+#[allow(unused_variables)]
+pub fn set_affinity(idx : usize)
+{
+  #[cfg(target_os="linux")]
+  unsafe {
+    let ret : i64;
+    let setaffinity : u64 = 203;
+    let pid         : u64 = 0;
+    let cpusetsize  : u64 = 32;
+
+    let mut mask : [u64; 4] = [0; 4];
+    mask[idx / 64] = 1 << (idx % 64);
+
+    std::arch::asm!(
+      "syscall"
+      , inout("rax") setaffinity => ret
+      ,    in("rdi") pid
+      ,    in("rsi") cpusetsize
+      ,    in("rdx") & mask
+      ,   out("r10") _
+      ,   out("r8" ) _
+      ,   out("r9" ) _
+      ,   out("rcx") _
+      ,   out("r11") _
+    );
+
+    if ret != 0 && isatty(STDERR) {
+      eprintln!("info: set_affinity returned {} for id {}", ret, idx);
+    }
+  }
+}
+
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 #[inline]
 #[cfg(target_feature="bmi2")]
@@ -130,6 +268,8 @@ pub fn bswap(a : u64) -> u64
   return unsafe { std::arch::x86_64::_bswap64(a as i64) as u64 };
 } */
 
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
 pub fn harsh_compress(x : f32) -> f32
 {
   return (1.0 + (x.abs() - 1.0) / (x.abs() + 1.0)).copysign(x);
@@ -175,6 +315,8 @@ pub fn d_logistic(x : f32) -> f32
   let denom = 1.0 + expon;
   return expon * (2.0f32).ln() / (denom * denom);
 }
+
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 pub struct SetU64 {
   ary : Vec<u64>,

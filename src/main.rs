@@ -1,10 +1,11 @@
 #![allow(dead_code)]
 // #![allow(uncommon_codepoints)]
 // #![feature(const_maybe_uninit_zeroed)]
+#![feature(bigint_helper_methods)]
 #![feature(iter_intersperse)]
-#![feature(maybe_uninit_array_assume_init)]
+// #![feature(maybe_uninit_array_assume_init)]
 #![feature(maybe_uninit_uninit_array)]
-#![feature(panic_backtrace_config)]
+// #![feature(panic_backtrace_config)]
 #![feature(portable_simd)]
 
 #![allow(incomplete_features)]
@@ -74,22 +75,25 @@ mod zobrist   ;
 
 fn main() -> std::io::Result<()>
 {
-  // std::panic::set_backtrace_style(std::panic::BacktraceStyle::Short);
   let mut args = std::env::args();
   args.next();
   if args.next().is_some() {
     eprintln!("{}", uci::HELP);
     return Ok(());
   }
-  util::set_stacksize(134_217_728);
   if util::isatty(util::STDERR) {
-    #[cfg(    debug_assertions )] let debug = "\x1B[91mdebug\x1B[39m ";
-    #[cfg(not(debug_assertions))] let debug = "";
+    #[cfg(debug_assertions)]
     eprintln!(
-      "Expositor {} {}\x1B[2mbuilt at {}\x1B[22m",
-      util::VERSION, debug, util::BUILD
+      "Expositor {} \x1B[91mdebug\x1B[39m \x1B[2mbuilt at {}\x1B[22m",
+      util::VERSION, util::BUILD
+    );
+    #[cfg(not(debug_assertions))]
+    eprintln!("Expositor {} \x1B[2mbuilt at {}\x1B[22m",
+      util::VERSION, util::BUILD
     );
   }
+  util::get_affinity();
+  util::set_stacksize(134_217_728);
   dest::generate_tables();
   tablebase::build_3man();
   return uci::uci();

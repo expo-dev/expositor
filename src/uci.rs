@@ -40,6 +40,11 @@ macro_rules! ttyeprintln {
   }
 }
 
+// TODO consistently use unwrap_or_continue and unwrap_or_break macros
+// macro_rules! unwrap_or_continue {
+//   ($opt:expr) => { match $opt { Some(x) => x, None => continue } }
+// }
+
 const SIMPLEXITOR : bool = false;
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
@@ -180,10 +185,27 @@ pub fn uci() -> std::io::Result<()>
         }
       }
 
+      "hash" => {
+        let tok = match inp.next() { Some(x) => x, None => continue };
+        if let Ok(mb) = tok.parse::<usize>() {
+          if mb < 1 || 262144 < mb { ttyeprintln!("error: invalid value"); }
+          else                     { initialize_cache(mb << 20);           }
+        }
+      }
+
+      "threads" => {
+        let tok = match inp.next() { Some(x) => x, None => continue };
+        if let Ok(th) = tok.parse::<usize>() {
+          if th < 1 || 252 < th { ttyeprintln!("error: invalid value"); }
+          else                  { search_threads = th;                  }
+        }
+      }
+
       "auto" => {
-        let th = std::cmp::max(num_cores()/2, 1);
+        let th = std::cmp::max(1, num_cores() / 2);
         search_threads = th;
-        initialize_cache(CACHE_SIZE_DEFAULT * th);
+        initialize_cache(536_870_912 * th);
+        initialize_syzygy("/syzygy");
       }
 
       "ucinewgame" => {
@@ -544,14 +566,12 @@ pub fn uci() -> std::io::Result<()>
 
       "save" => {
         let subcmd = match inp.next() { Some(x) => x, None => continue };
-        let path   = match inp.next() { Some(x) => x, None => continue };
         match subcmd {
-          "source" => {
-            let mut path = path.to_owned();
-            if !path.ends_with(".rs") { path.push_str(".rs"); }
-            unsafe { NETWORK.save_source(&path)?; }
+          "default" => {
+            unsafe { NETWORK.save_default()?; }
           }
           "image" => {
+            let path = match inp.next() { Some(x) => x, None => continue };
             unsafe {
               NETWORK.save_image(&format!("{path}-fst-indp-all"), false, -1)?;
               NETWORK.save_image(&format!("{path}-fst-unif-all"), true,  -1)?;

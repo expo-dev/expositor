@@ -44,8 +44,8 @@ use crate::misc::{SQRT2, SQRT3, SQRT6};
 // One of the most common multipliers that I've seen used with m = 2⁶⁴ is
 //     6364136223846793005,
 //   which is mentioned by Knuth (p. 108) and credited to a C. E. Haynes.
-//   I've unfortunately been unable to find any further information about the
-//   origin of this constant, but regardless, it would be suitable here.
+//   I've unfortunately been unable to find any further information about
+//   the origin of this constant, but regardless, it would be suitable here.
 //
 // A list of multipliers for m = 2⁶⁴ is provided in a recent paper titled
 //     Computationally Easy, Spectrally Good Multipliers
@@ -91,7 +91,7 @@ impl Rand for u64 {
 
   fn rand() -> Self
   {
-    return u64::rand_with(unsafe { &mut *std::ptr::addr_of_mut!(RNG_STATE) });
+    return Self::rand_with(unsafe { &mut *std::ptr::addr_of_mut!(RNG_STATE) });
   }
 }
 
@@ -103,7 +103,7 @@ impl Rand for u32 {
 
   fn rand() -> Self
   {
-    return u32::rand_with(unsafe { &mut *std::ptr::addr_of_mut!(RNG_STATE) });
+    return Self::rand_with(unsafe { &mut *std::ptr::addr_of_mut!(RNG_STATE) });
   }
 }
 

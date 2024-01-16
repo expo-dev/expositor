@@ -56,9 +56,8 @@ impl AddAssign<&NetworkBody> for NetworkBody {
       let self_ary = self as *mut NetworkBody as *mut f32;
       let  rhs_ary = rhs as *const NetworkBody as *const f32;
       for idx in 0..BODY_SIZE {
-        let idx = idx as isize;
-        let sum = *self_ary.offset(idx) + *rhs_ary.offset(idx);
-        std::ptr::write(self_ary.offset(idx), sum);
+        let sum = *self_ary.add(idx) + *rhs_ary.add(idx);
+        std::ptr::write(self_ary.add(idx), sum);
       }
     }
   }
@@ -70,9 +69,8 @@ impl MulAssign<f32> for NetworkBody {
     unsafe {
       let self_ary = self as *mut NetworkBody as *mut f32;
       for idx in 0..BODY_SIZE {
-        let idx = idx as isize;
-        let product = *self_ary.offset(idx) * rhs;
-        std::ptr::write(self_ary.offset(idx), product);
+        let product = *self_ary.add(idx) * rhs;
+        std::ptr::write(self_ary.add(idx), product);
       }
     }
   }
@@ -85,9 +83,8 @@ impl AddAssign<&NetworkHead> for NetworkHead {
       let self_ary = self as *mut NetworkHead as *mut f32;
       let  rhs_ary = rhs as *const NetworkHead as *const f32;
       for idx in 0..HEAD_SIZE {
-        let idx = idx as isize;
-        let sum = *self_ary.offset(idx) + *rhs_ary.offset(idx);
-        std::ptr::write(self_ary.offset(idx), sum);
+        let sum = *self_ary.add(idx) + *rhs_ary.add(idx);
+        std::ptr::write(self_ary.add(idx), sum);
       }
     }
   }
@@ -99,9 +96,8 @@ impl MulAssign<f32> for NetworkHead {
     unsafe {
       let self_ary = self as *mut NetworkHead as *mut f32;
       for idx in 0..HEAD_SIZE {
-        let idx = idx as isize;
-        let product = *self_ary.offset(idx) * rhs;
-        std::ptr::write(self_ary.offset(idx), product);
+        let product = *self_ary.add(idx) * rhs;
+        std::ptr::write(self_ary.add(idx), product);
       }
     }
   }
@@ -425,9 +421,8 @@ impl TrainingNetwork {
         let means = transmute::<_, *mut f32>(std::ptr::addr_of_mut!(self.rn[r].m));
         let  grad = transmute::<_, *const f32>(std::ptr::addr_of!(self.rn[r].g));
         for idx in 0..BODY_SIZE {
-          let idx = idx as isize;
-          let upd_m = *means.offset(idx) + (*grad.offset(idx)) * cmpl_beta;
-          std::ptr::write(means.offset(idx), upd_m);
+          let upd_m = *means.add(idx) + (*grad.add(idx)) * cmpl_beta;
+          std::ptr::write(means.add(idx), upd_m);
         }
 
         self.rn[r].v *= gamma;
@@ -435,20 +430,18 @@ impl TrainingNetwork {
         let vars = transmute::<_, *mut f32>(std::ptr::addr_of_mut!(self.rn[r].v));
         let grad = transmute::<_, *const f32>(std::ptr::addr_of!(self.rn[r].g));
         for idx in 0..BODY_SIZE {
-          let idx = idx as isize;
-          let g = *grad.offset(idx);
-          let upd_v = *vars.offset(idx) + g * g * cmpl_gamma;
-          std::ptr::write(vars.offset(idx), upd_v);
+          let g = *grad.add(idx);
+          let upd_v = *vars.add(idx) + g * g * cmpl_gamma;
+          std::ptr::write(vars.add(idx), upd_v);
         }
 
         let params = transmute::<_, *mut f32>(std::ptr::addr_of_mut!(self.params.rn[r]));
         let  means = transmute::<_, *const f32>(std::ptr::addr_of!(self.rn[r].m));
         let   vars = transmute::<_, *const f32>(std::ptr::addr_of!(self.rn[r].v));
         for idx in 0..BODY_SIZE {
-          let idx = idx as isize;
-          let upd_w = (*params.offset(idx))
-                    - alpha * (*means.offset(idx)) / ((*vars.offset(idx)).sqrt() + epsilon);
-          std::ptr::write(params.offset(idx), upd_w);
+          let upd_w = (*params.add(idx))
+                    - alpha * (*means.add(idx)) / ((*vars.add(idx)).sqrt() + epsilon);
+          std::ptr::write(params.add(idx), upd_w);
         }
       }
       for h in 0..HEADS {
@@ -457,9 +450,8 @@ impl TrainingNetwork {
         let means = transmute::<_, *mut f32>(std::ptr::addr_of_mut!(self.hd[h].m));
         let  grad = transmute::<_, *const f32>(std::ptr::addr_of!(self.hd[h].g));
         for idx in 0..HEAD_SIZE {
-          let idx = idx as isize;
-          let upd_m = *means.offset(idx) + (*grad.offset(idx)) * cmpl_beta;
-          std::ptr::write(means.offset(idx), upd_m);
+          let upd_m = *means.add(idx) + (*grad.add(idx)) * cmpl_beta;
+          std::ptr::write(means.add(idx), upd_m);
         }
 
         self.hd[h].v *= gamma;
@@ -467,20 +459,18 @@ impl TrainingNetwork {
         let vars = transmute::<_, *mut f32>(std::ptr::addr_of_mut!(self.hd[h].v));
         let grad = transmute::<_, *const f32>(std::ptr::addr_of!(self.hd[h].g));
         for idx in 0..HEAD_SIZE {
-          let idx = idx as isize;
-          let g = *grad.offset(idx);
-          let upd_v = *vars.offset(idx) + g * g * cmpl_gamma;
-          std::ptr::write(vars.offset(idx), upd_v);
+          let g = *grad.add(idx);
+          let upd_v = *vars.add(idx) + g * g * cmpl_gamma;
+          std::ptr::write(vars.add(idx), upd_v);
         }
 
         let params = transmute::<_, *mut f32>(std::ptr::addr_of_mut!(self.params.hd[h]));
         let  means = transmute::<_, *const f32>(std::ptr::addr_of!(self.hd[h].m));
         let   vars = transmute::<_, *const f32>(std::ptr::addr_of!(self.hd[h].v));
         for idx in 0..HEAD_SIZE {
-          let idx = idx as isize;
-          let upd_w = (*params.offset(idx))
-                    - alpha * (*means.offset(idx)) / ((*vars.offset(idx)).sqrt() + epsilon);
-          std::ptr::write(params.offset(idx), upd_w);
+          let upd_w = (*params.add(idx))
+                    - alpha * (*means.add(idx)) / ((*vars.add(idx)).sqrt() + epsilon);
+          std::ptr::write(params.add(idx), upd_w);
         }
       }
     }

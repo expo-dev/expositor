@@ -18,6 +18,7 @@ impl <const B : bool> Guard<B> {
   const CHECK : () = assert!(B);
   fn assert() { let _ = Self::CHECK; }
 }
+
 macro_rules! static_assert {
   ($cond:expr) => { Guard::<{$cond}>::assert(); }
 }
@@ -109,9 +110,8 @@ impl PolicyNetwork {
     unsafe {
       let ary = self as *mut PolicyNetwork as *mut f32;
       for idx in 0..NUM_PARAMS {
-        let idx = idx as isize;
-        let prod = *ary.offset(idx) * scalar;
-        std::ptr::write(ary.offset(idx), prod);
+        let prod = *ary.add(idx) * scalar;
+        std::ptr::write(ary.add(idx), prod);
       }
     }
   }
@@ -121,9 +121,8 @@ impl PolicyNetwork {
       let self_ary = self as *mut PolicyNetwork as *mut f32;
       let  rhs_ary = rhs as *const PolicyNetwork as *const f32;
       for idx in 0..NUM_PARAMS {
-        let idx = idx as isize;
-        let sum = *self_ary.offset(idx) + *rhs_ary.offset(idx);
-        std::ptr::write(self_ary.offset(idx), sum);
+        let sum = *self_ary.add(idx) + *rhs_ary.add(idx);
+        std::ptr::write(self_ary.add(idx), sum);
       }
     }
   }
@@ -133,9 +132,8 @@ impl PolicyNetwork {
       let self_ary = self as *mut PolicyNetwork as *mut f32;
       let  rhs_ary = rhs as *const PolicyNetwork as *const f32;
       for idx in 0..NUM_PARAMS {
-        let idx = idx as isize;
-        let sum = *self_ary.offset(idx) + *rhs_ary.offset(idx) * scalar;
-        std::ptr::write(self_ary.offset(idx), sum);
+        let sum = *self_ary.add(idx) + *rhs_ary.add(idx) * scalar;
+        std::ptr::write(self_ary.add(idx), sum);
       }
     }
   }
@@ -145,10 +143,9 @@ impl PolicyNetwork {
       let self_ary = self as *mut PolicyNetwork as *mut f32;
       let  rhs_ary = rhs as *const PolicyNetwork as *const f32;
       for idx in 0..NUM_PARAMS {
-        let idx = idx as isize;
-        let rhs_value = *rhs_ary.offset(idx);
-        let sum = *self_ary.offset(idx) + rhs_value * rhs_value * scalar;
-        std::ptr::write(self_ary.offset(idx), sum);
+        let rhs_value = *rhs_ary.add(idx);
+        let sum = *self_ary.add(idx) + rhs_value * rhs_value * scalar;
+        std::ptr::write(self_ary.add(idx), sum);
       }
     }
   }
@@ -159,12 +156,11 @@ impl PolicyNetwork {
       let  rhs_ary = rhs as *const PolicyNetwork as *const f32;
       let  ofs_ary = ofs as *const PolicyNetwork as *const f32;
       for idx in 0..NUM_PARAMS {
-        let idx = idx as isize;
-        let rhs_value = *rhs_ary.offset(idx);
-        let ofs_value = *ofs_ary.offset(idx);
+        let rhs_value = *rhs_ary.add(idx);
+        let ofs_value = *ofs_ary.add(idx);
         let diff = rhs_value - ofs_value;
-        let sum = *self_ary.offset(idx) + diff * diff * scalar;
-        std::ptr::write(self_ary.offset(idx), sum);
+        let sum = *self_ary.add(idx) + diff * diff * scalar;
+        std::ptr::write(self_ary.add(idx), sum);
       }
     }
   }
@@ -175,12 +171,11 @@ impl PolicyNetwork {
       let means_ary = means as *const PolicyNetwork as *const f32;
       let  vars_ary = vars  as *const PolicyNetwork as *const f32;
       for idx in 0..NUM_PARAMS {
-        let idx = idx as isize;
-        let g =  *self_ary.offset(idx);
-        let m = *means_ary.offset(idx);
-        let v =  *vars_ary.offset(idx);
+        let g =  *self_ary.add(idx);
+        let m = *means_ary.add(idx);
+        let v =  *vars_ary.add(idx);
         let u = g - scalar * m / (v.sqrt() + epsilon);
-        std::ptr::write(self_ary.offset(idx), u);
+        std::ptr::write(self_ary.add(idx), u);
       }
     }
   }
@@ -603,8 +598,8 @@ fn stats(c : &PolicyNetwork, d : &PolicyNetwork) -> f64 {
   let mut num_nonzero = 0;
   let mut num_flip = 0;
   for idx in 0..NUM_PARAMS {
-    let c_val = unsafe { *c_ary.offset(idx as isize) };
-    let d_val = unsafe { *d_ary.offset(idx as isize) };
+    let c_val = unsafe { *c_ary.add(idx) };
+    let d_val = unsafe { *d_ary.add(idx) };
     if c_val == 0.0 { continue; }
     if d_val == 0.0 { continue; }
     num_nonzero += 1;

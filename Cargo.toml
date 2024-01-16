@@ -15,11 +15,9 @@ opt-level = 3
 debug = true
 debug-assertions = true
 overflow-checks = true
-# panic = "abort"
 
 [profile.release]
 opt-level = 3
 debug = true
 debug-assertions = false
 overflow-checks = false
-# panic = "abort"
