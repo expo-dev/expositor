@@ -41,17 +41,17 @@ _Updated January 2024_
 It’s been over a year since the last release, but Expositor hasn’t been
 abandoned. Since the last release, three major projects have been completed:
 
-- her value network has been improved by contextually switching out the first
+- Her value network has been improved by contextually switching out the first
 layer (depending on the locations of the kings) and second layer (depending on
-the material on the board),
+the material on the board).
 
-- many of her core types have been rewritten and the correctness of her code
-has been improved,[^1] and
+- Many of her core types have been rewritten and the correctness of her code
+has been improved.[^1]
 
-- she now has a self-play routine, obviating the need for any external tools or
+- She now has a self-play routine, obviating the need for any external tools or
 opening books to generate training data.
 
-Other changes include:
+Other changes include
 
 - a bespoke format for training data (the “quick” format) that is
 smaller and faster to deserialize,
