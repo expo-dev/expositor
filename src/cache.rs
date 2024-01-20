@@ -97,7 +97,6 @@ pub fn initialize_cache(size : usize)
 
     // For the sake of performance, it's crucial
     //   that we fill out the page table now.
-    let ptr = std::mem::transmute::<_, *mut u8>(GLOB.cache.as_mut_ptr());
     // We could zero out the entire region with
     //     for x in 0..size { *ptr.add(x) = 0; }
     //   but that's not necessary – triggering the page fault is enough.
@@ -105,8 +104,31 @@ pub fn initialize_cache(size : usize)
     // There is a potential side effect: if the allocator is reusing a
     //   previous allocation, initializing the table may not reset the
     //   table (that is, old entries may be preserved).
+    // This can take a while if page faults are handled one at a time,
+    //   so we issue many in parallel if we can.
+
     let small_pages = size / 4096;
-    for x in 0..small_pages { *ptr.add(x * 4096) = 0; }
+    let n = std::cmp::max(1, crate::util::num_cores() / 2);
+    let n = std::cmp::min(n, 16);
+
+    if n > 1 {
+      let mut handles = Vec::new();
+      for id in 0..n {
+        handles.push(
+          std::thread::spawn(move || {
+            let ptr = std::mem::transmute::<_, *mut u8>(GLOB.cache.as_mut_ptr());
+            let start = small_pages *    id    / n;
+            let end   = small_pages * (id + 1) / n;
+            for x in start..end { *ptr.add(x * 4096) = 0; }
+          })
+        );
+      }
+      for h in handles { h.join().unwrap(); }
+    }
+    else {
+      let ptr = std::mem::transmute::<_, *mut u8>(GLOB.cache.as_mut_ptr());
+      for x in 0..small_pages { *ptr.add(x * 4096) = 0; }
+    }
   }
 }
 

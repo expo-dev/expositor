@@ -4,6 +4,8 @@
 
 </div>
 
+<p align="center"><img src="pic/banner.png" style="width: 32em;"></p>
+
 _For the version currently playing in the Top Chess Engine Championship, see the
 [tcec](https://github.com/expo-dev/expositor/tree/tcec) branch._
 
@@ -81,17 +83,7 @@ be re-bootstrapped,[^2]
 
 [^1]: Expositor will always have undefined behavior, since some things that can
 be useful for performance are simply impossible to do in Rust, such as reading
-uninitialized memory or synchronizing access between threads without
-establishing ordering and without atomicity. [Note that “synchronization” simply
-means indication that an object may be accessed by more than one thread, whereas
-“ordering” implies some constraint on order in which loads and stores may be
-observed. “Atomicity” has to do with sequences of memory operations, such as
-pairs of loads and stores (as during an increment or exchange) for word- or
-subword-sized objects, or a sequence of multiple loads for objects larger than a
-machine word (to prevent “torn reads”, which in some cases we may actually want
-to allow). Besides atomic objects, synchronization is established for objects
-passed to threads when they are spawned and objects returned by threads when
-they are reaped, and insofar as I’m aware, that’s it.]
+uninitialized memory or accessing memory from multiple threads without atomicity.
 
 [^2]: There are particular goals and constraints that I have for the alternative
 evaluator and, since I expect that I won’t ever touch the evaluator again after

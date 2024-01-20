@@ -79,11 +79,17 @@ pub fn set_stacksize(bytes : u64) -> bool
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
+pub static mut NUM_CORES : usize = 0;
+
 // NOTE that this typically returns the number of logical (not physical) cores.
 pub fn num_cores() -> usize
 {
+  let n = unsafe { NUM_CORES };
+  if n > 0 { return n; }
   use std::thread::available_parallelism;
-  return if let Ok(n) = available_parallelism() { n.get() } else { 1 };
+  let n = if let Ok(n) = available_parallelism() { n.get() } else { 1 };
+  unsafe { NUM_CORES = n; }
+  return n;
 }
 
 fn cpu0_sibling() -> isize
