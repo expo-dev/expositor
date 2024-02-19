@@ -16,10 +16,4 @@ BUILD_DATE="$(date +'%-d %b %Y')"
 BUILD_TIME="$(date +'%H%M')"
 export BUILD="built at $BUILD_TIME on $BUILD_DATE"
 
-FLAGS='-C target-cpu=native'
-if [[ "$(uname)" = 'Darwin' ]]; then
-  FLAGS="$FLAGS -C link-arg=-Wl,-stack_size,0x2000000"
-fi
-
-RUSTFLAGS="$FLAGS" cargo build
-RUSTFLAGS="$FLAGS" cargo build --release
+RUSTFLAGS='-C target-cpu=native' cargo build --release
