@@ -351,7 +351,7 @@ impl Iterator for PgnReader {
       // Then we parse the moves
       for token in text.split_ascii_whitespace() {
         if token.ends_with('.') { continue; }
-        if token=="1-0" || token=="0-1" || token=="1/2-1/2" || token=="*" {
+        if token == "1-0" || token == "0-1" || token == "1/2-1/2" || token == "*" {
           let list_result = match token {
             "1-0"     => Outcome::White,
             "0-1"     => Outcome::Black,

@@ -45,8 +45,6 @@ macro_rules! ttyeprintln {
 //   ($opt:expr) => { match $opt { Some(x) => x, None => continue } }
 // }
 
-const SIMPLEXITOR : bool = false;
-
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 pub const CACHE_SIZE_DEFAULT  : usize = 67_108_864; // 64 MiB ~ 4 million entries
@@ -68,12 +66,14 @@ pub fn uci() -> std::io::Result<()>
 
   let mut supervisor : Option<std::thread::JoinHandle<()>> = None;
 
-  let mut root    = State::new();
+  let mut root = State::new();
   let mut history = Vec::new();
 
   root.initialize_nnue();
 
-  let mut policy_network = PolicyNetwork::zero();
+  let mut policy_network = unsafe { std::mem::transmute(*crate::default::DEFAULT_POLICY) };
+  let mut simplex_mode : Option<SimplexConfig> = None;
+
   let mut proof_alloc : Option<ProofAlloc> = None;
 
   let stdin = std::io::stdin();
@@ -313,10 +313,23 @@ pub fn uci() -> std::io::Result<()>
 
       // Search  ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
+      "simplex" => {
+        let tok = match inp.next() { Some(x) => x, None => continue };
+        simplex_mode = match tok.to_lowercase().as_str() {
+          "false" | "no" | "f" | "n" => None,
+          "true" | "yes" | "t" | "y" =>
+            if simplex_mode.is_some() { simplex_mode } else { Some(SimplexConfig::PolicyOnly) },
+          "value"  => Some(SimplexConfig::ValueOnly ),
+          "hybrid" => Some(SimplexConfig::Hybrid    ),
+          "policy" => Some(SimplexConfig::PolicyOnly),
+          _ => { ttyeprintln!("error: invalid value"); continue; }
+        };
+      }
+
       "go" => {
         let men = (root.sides[White] | root.sides[Black]).count_ones();
         let syz = syzygy_enabled() && syzygy_support() >= men;
-        if !SIMPLEXITOR && root.rights == 0 && (men == 3 || syz) {
+        if root.rights == 0 && (men == 3 || syz) {
           let mut score = INVALID_SCORE;
           let mut pv = Vec::new();
           if men == 3 {
@@ -367,12 +380,12 @@ pub fn uci() -> std::io::Result<()>
         if !isatty(STDOUT) {
           params.overhead = search_overhead;
         }
-        let limits = params.calculate_limits(&root, if SIMPLEXITOR { 0.0 } else { 10.0 });
-        if SIMPLEXITOR {
+        if let Some(mode) = simplex_mode {
           // ↓↓↓ TEMPORARY ↓↓↓
-          showpolicy(&root, &policy_network, false);
+          // showpolicy(&root, &policy_network, false);
           // ↑↑↑ TEMPORARY ↑↑↑
-          simplexitor(&root, &history, limits, SimplexConfig::PolicyOnly, &policy_network);
+          let limits = params.calculate_limits(&root, 0.0);
+          simplexitor(&root, &history, limits, mode, &policy_network);
           continue;
         }
         if searching() {
@@ -382,11 +395,12 @@ pub fn uci() -> std::io::Result<()>
             continue;
           }
         }
+        let limits = params.calculate_limits(&root, 10.0);
         supervisor = Some(start_search(&root, &history, limits, search_threads));
       }
 
       "stop" => {
-        if SIMPLEXITOR { continue; }
+        if simplex_mode.is_some() { continue; }
         if !searching() {
           std::thread::sleep(std::time::Duration::from_millis(MARGIN));
           if !searching() {
@@ -414,8 +428,8 @@ pub fn uci() -> std::io::Result<()>
           }
           if let Some(token) = maybe {
             let set = match token.to_lowercase().as_str() {
-              "true" | "t" | "yes" | "y" => true,
-              "false" | "f" | "no" | "n" => false,
+              "false" | "no" | "f" | "n" => false,
+              "true" | "yes" | "t" | "y" => true,
               _ => { ttyeprintln!("error: invalid value"); continue; }
             };
             unsafe {
@@ -585,6 +599,7 @@ pub fn uci() -> std::io::Result<()>
         }
       }
 
+      /*
       "stat" => {
         // ↓↓↓ TEMPORARY ↓↓↓
         if let Some(path) = inp.next() {
@@ -649,6 +664,7 @@ pub fn uci() -> std::io::Result<()>
           unsafe { NETWORK.stat(); }
         }
       }
+      */
 
       "train" | "refine" => {
         if !isatty(STDERR) { continue; }
@@ -744,24 +760,60 @@ pub fn uci() -> std::io::Result<()>
       // Shortcuts ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
       _ => {
-        if let Ok(new) = State::from_fen(&buf) {
-          root = new;
-          root.initialize_nnue();
-          history.clear();
+        if buf == "*\n" { continue; }
+        // FEN
+        if buf.contains('/') {
+          match State::from_fen(&buf) {
+            Ok(new) => {
+              root = new;
+              root.initialize_nnue();
+              history.clear();
+            }
+            Err(msg) => {
+              ttyeprintln!("error: {}", msg);
+            }
+          }
           continue;
         }
-        if let Ok(ary) = <&[u8; 40]>::try_from(cmd.as_bytes()) {
-          let mini = MiniState::from_quick(ary);
-          root = State::from(&mini);
-          root.key = root.zobrist();
-          root.initialize_nnue();
-          history.clear();
-          continue;
+        // Quick
+        let stripped = buf.trim();
+        if !stripped.contains(' ') {
+          if let Ok(ary) = <&[u8; 40]>::try_from(stripped.as_bytes()) {
+            let mini = MiniState::from_quick(ary);
+            root = State::from(&mini);
+            root.key = root.zobrist();
+            root.initialize_nnue();
+            history.clear();
+            continue;
+          }
         }
+        // Move List
         let tokens = buf.split_ascii_whitespace();
         let mut working = root.clone_empty();
         let mut movelist = Vec::new();
+        let mut reset = false;
         for token in tokens {
+          let token = match token.split_once('.') {
+            None => token,
+            Some((mv_number, mv_token)) => {
+              match mv_number.parse::<u16>() {
+                Ok(n) =>
+                  if n == 1 {
+                    working = State::new();
+                    working.initialize_nnue();
+                    movelist.clear();
+                    reset = true;
+                  }
+                Err(_) => {
+                  ttyeprintln!("error: unknown command");
+                  movelist.clear();
+                  break;
+                }
+              }
+              mv_token
+            }
+          };
+          if token.len() == 0 { continue; }
           if let Ok(mv) = parse_long(&working, token) {
             working.apply(&mv);
             movelist.push(mv);
@@ -777,6 +829,11 @@ pub fn uci() -> std::io::Result<()>
           break;
         }
         let num_moves = movelist.len();
+        if num_moves > 0 && reset {
+          root = State::new();
+          root.initialize_nnue();
+          history.clear();
+        }
         for mv in movelist {
           root.apply(&mv);
           history.push((root.key, mv.is_capture()));

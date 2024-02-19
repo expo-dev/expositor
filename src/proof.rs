@@ -8,6 +8,7 @@ use crate::state::{State, SavedMetadata};
 use std::time::Instant;
 
 /* THIS IS HIGHLY EXPERIMENTAL AND NEEDS TO BE REWRITTEN IN δ-φ FORM */
+/*   or better yet, I should switch to DFPNS with a cache            */
 
 #[derive(Clone)]
 pub struct ProofNode {

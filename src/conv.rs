@@ -134,6 +134,23 @@ pub fn d_sigm(x : f32) -> f32
     + (1.0 / R);
 } */
 
+pub fn sigm_1(x : f32) -> f32
+{
+  const R : f32 = 64.0;
+  let a = (R - 1.0) / R;
+  let b = 1.0 / R;
+  return (x * a) / (x * x + 1.0).sqrt() + x * b;
+}
+
+pub fn d_sigm_1(x : f32) -> f32
+{
+  const R : f32 = 64.0;
+  let a = (R - 1.0) / R;
+  let b = 1.0 / R;
+  let d = x * x + 1.0;
+  return a / (d * d * d).sqrt() + b;
+}
+
 pub fn sigm(x : Simd<f32, 8>) -> Simd<f32, 8>
 {
   const R : f32 = 64.0;
@@ -156,17 +173,21 @@ pub fn d_sigm(x : Simd<f32, 8>) -> Simd<f32, 8>
 pub fn sigm_N_N<const N : usize>(
   s : &[f32; N], a : &mut [f32; N]
 ) {
-  assert_lanes!(N);
-  for ofs in 0..(N/8) { simd_store!(a, ofs*8, sigm(simd_load!(s, ofs*8))); }
+  // assert_lanes!(N);
+  let n = N / 8;
+  for ofs in 0..n { simd_store!(a, ofs*8, sigm(simd_load!(s, ofs*8))); }
+  if n * 8 != N { for x in (n*8)..N { a[x] = sigm_1(s[x]); } }
 }
 
 pub fn prop_sigm_N_N<const N : usize>(
   ds : &mut [f32; N], da : &[f32; N], s : &[f32; N]
 ) {
-  assert_lanes!(N);
-  for ofs in 0..(N/8) {
+  // assert_lanes!(N);
+  let n = N / 8;
+  for ofs in 0..n {
     simd_store!(ds, ofs*8, simd_load!(da, ofs*8) * d_sigm(simd_load!(s, ofs*8)));
   }
+  if n * 8 != N { for x in (n*8)..N { ds[x] = da[x] * d_sigm_1(s[x]); } }
 }
 
 fn relu(x : Simd<f32, 8>) -> Simd<f32, 8>
@@ -297,7 +318,7 @@ pub fn prop_relu_z88N_z88N<const N : usize>(
 
 /* CHANNEL-WIDE STATISTICS * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-pub fn pool_88N_N<const N : usize>(a : &[Board; N], s : &mut [f32; N])
+pub fn pool_avg_88N_N<const N : usize>(a : &[Board; N], s : &mut [f32; N])
 {
   for n in 0..N {
     let an = &a[n];
@@ -314,27 +335,33 @@ pub fn pool_88N_N<const N : usize>(a : &[Board; N], s : &mut [f32; N])
       + ((a4 + a5) + (a6 + a7))
     );
     s[n] = sum * (1.0 / 64.0);
-/*
-    let mx_q0 = s0.simd_max(s1);
-    let mx_q1 = s2.simd_max(s3);
-    let mx_q2 = s4.simd_max(s5);
-    let mx_q3 = s6.simd_max(s7);
-    let mx_h0 = mx_q0.simd_max(mx_q1);
-    let mx_h1 = mx_q2.simd_max(mx_q3);
-    let max = mx_h0.simd_max(mx_h1).reduce_max();
-
-    let mn_q0 = s0.simd_min(s1);
-    let mn_q1 = s2.simd_min(s3);
-    let mn_q2 = s4.simd_min(s5);
-    let mn_q3 = s6.simd_min(s7);
-    let mn_h0 = mn_q0.simd_min(mn_q1);
-    let mn_h1 = mn_q2.simd_min(mn_q3);
-    let min = mn_h0.simd_min(mn_h1).reduce_min();
-*/
   }
 }
 
-pub fn back_pool_88N_N<const N : usize>(da : &mut [Board; N], ds : &[f32; N])
+pub fn pool_max_88N_N<const N : usize>(a : &[Board; N], s : &mut [f32; N])
+{
+  for n in 0..N {
+    let an = &a[n];
+    let a0 = simd_load!(an,  0);
+    let a1 = simd_load!(an,  8);
+    let a2 = simd_load!(an, 16);
+    let a3 = simd_load!(an, 24);
+    let a4 = simd_load!(an, 32);
+    let a5 = simd_load!(an, 40);
+    let a6 = simd_load!(an, 48);
+    let a7 = simd_load!(an, 56);
+    let m01  =   a0.simd_max(a1);
+    let m23  =   a2.simd_max(a3);
+    let m45  =   a4.simd_max(a5);
+    let m67  =   a6.simd_max(a7);
+    let m0_3 =  m01.simd_max(m23);
+    let m4_7 =  m45.simd_max(m67);
+    let m0_8 = m0_3.simd_max(m4_7);
+    s[n] = m0_8.reduce_max();
+  }
+}
+
+pub fn back_pool_avg_88N_N<const N : usize>(da : &mut [Board; N], ds : &[f32; N])
 {
   for n in 0..N {
     let vs = Simd::<f32, 8>::splat(ds[n] * (1.0 / 64.0));
@@ -350,16 +377,33 @@ pub fn back_pool_88N_N<const N : usize>(da : &mut [Board; N], ds : &[f32; N])
   }
 }
 
+pub fn back_pool_max_88N_N<const N : usize>(
+  da : &mut [Board; N], ds : &[f32; N], a : &[Board; N], s : &[f32; N]
+) {
+  // TODO optimize
+  for n in 0..N {
+    for x in 0..64 {
+      if a[n][x] == s[n] { da[n][x] += ds[n]; }
+    }
+  }
+}
+
 /* FULLY-CONNECTED * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 pub fn fwd_P_1<const P : usize>(
   a : &[f32; P], w : &[f32; P]
 ) -> f32
 {
-  assert_lanes!(P);
+  // assert_lanes!(P);
+  let p = P / 8;
   let mut s = Simd::<f32, 8>::splat(0.0);
-  for ofs in 0..(P/8) { s += simd_load!(a, ofs*8) * simd_load!(w, ofs*8); }
-  return horizontal_sum(s);
+  for ofs in 0..p { s += simd_load!(a, ofs*8) * simd_load!(w, ofs*8); }
+  if p * 8 == P { return horizontal_sum(s); }
+
+  let s = horizontal_sum(s);
+  let mut t = 0.0;
+  for x in (p*8)..P { t += a[x] * w[x]; }
+  return s + t;
 }
 
 pub fn fwd_P_Q<const P : usize, const Q : usize>(
@@ -379,33 +423,60 @@ pub fn back_P_1<const P : usize>(
 pub fn back_P_Q<const P : usize, const Q : usize>(
   a : &[f32; P], dw : &mut [[f32; P]; Q], ds : &[f32; Q]
 ) {
-  assert_lanes!(P);
-  for ofs in 0..(P/8) {
+  // assert_lanes!(P);
+  let p = P / 8;
+  for ofs in 0..p {
     let va = simd_load!(a, ofs*8);
     for q in 0..Q {
       simd_incr!(dw[q], ofs*8, va * Simd::<f32, 8>::splat(ds[q]));
     }
   }
+  if p * 8 == P { return; }
+
+  for x in (p*8)..P { for q in 0..Q { dw[q][x] += a[x] * ds[q]; } }
 }
 
 pub fn back_bias_N<const N : usize>(
   db : &mut [f32; N], ds : &[f32; N]
 ) {
-  assert_lanes!(N);
-  for ofs in 0..(N/8) { simd_incr!(db, ofs*8, simd_load!(ds, ofs*8)); }
+  // assert_lanes!(N);
+  let n = N / 8;
+  for ofs in 0..n { simd_incr!(db, ofs*8, simd_load!(ds, ofs*8)); }
+  if n * 8 != N { for x in (n*8)..N { db[x] += ds[x]; } }
 }
 
 pub fn prop_P_Q<const P : usize, const Q : usize>(
   da : &mut [f32; P], w : &[[f32; P]; Q], ds : &[f32; Q]
 ) {
-  assert_lanes!(P);
+  // assert_lanes!(P);
   // TODO exchange loops (?)
+  let p = P / 8;
   for q in 0..Q {
     let wq = &w[q];
     let vs = Simd::<f32, 8>::splat(ds[q]);
-    for ofs in 0..(P/8) {
+    for ofs in 0..p {
       simd_incr!(da, ofs*8, simd_load!(wq, ofs*8) * vs);
     }
+    if p * 8 != P { for x in (p*8)..P { da[x] += wq[x] * ds[q]; } }
+  }
+}
+
+/* ADDITION  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+pub fn add_88N_88N<const N : usize>(
+  a : &[Board; N], b : &mut [Board; N]
+) {
+  for n in 0..N {
+    let an = &a[n];
+    let bn = &mut b[n];
+    simd_incr!(bn,  0, simd_load!(an,  0));
+    simd_incr!(bn,  8, simd_load!(an,  8));
+    simd_incr!(bn, 16, simd_load!(an, 16));
+    simd_incr!(bn, 24, simd_load!(an, 24));
+    simd_incr!(bn, 32, simd_load!(an, 32));
+    simd_incr!(bn, 40, simd_load!(an, 40));
+    simd_incr!(bn, 48, simd_load!(an, 48));
+    simd_incr!(bn, 56, simd_load!(an, 56));
   }
 }
 
@@ -469,6 +540,41 @@ pub fn mul_88N_N_z88N_prop_88N<const N : usize>(
   }
 }
 
+pub fn dot_88N_N_88_prop_N<const N : usize>(
+  a : &[Board; N], dc : &mut [f32; N], dp : &Board
+) {
+  for n in 0..N {
+    let an = &a[n];
+    let r0 = simd_load!(dp,  0) * simd_load!(an,  0);
+    let r1 = simd_load!(dp,  8) * simd_load!(an,  8);
+    let r2 = simd_load!(dp, 16) * simd_load!(an, 16);
+    let r3 = simd_load!(dp, 24) * simd_load!(an, 24);
+    let r4 = simd_load!(dp, 32) * simd_load!(an, 32);
+    let r5 = simd_load!(dp, 40) * simd_load!(an, 40);
+    let r6 = simd_load!(dp, 48) * simd_load!(an, 48);
+    let r7 = simd_load!(dp, 56) * simd_load!(an, 56);
+    let r = ((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7));
+    dc[n] = horizontal_sum(r);
+  }
+}
+
+pub fn dot_88N_N_88_prop_88N<const N : usize>(
+  da : &mut [Board; N], c : &[f32; N], dp : &Board
+) {
+  for n in 0..N {
+    let an = &mut da[n];
+    let v = Simd::<f32, 8>::splat(c[n]);
+    simd_incr!(an,  0, simd_load!(dp,  0) * v);
+    simd_incr!(an,  8, simd_load!(dp,  8) * v);
+    simd_incr!(an, 16, simd_load!(dp, 16) * v);
+    simd_incr!(an, 24, simd_load!(dp, 24) * v);
+    simd_incr!(an, 32, simd_load!(dp, 32) * v);
+    simd_incr!(an, 40, simd_load!(dp, 40) * v);
+    simd_incr!(an, 48, simd_load!(dp, 48) * v);
+    simd_incr!(an, 56, simd_load!(dp, 56) * v);
+  }
+}
+
 /* 1×1 CONVOLUTION * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 pub fn fwd_88P_11P_88<const P : usize>(
@@ -518,6 +624,69 @@ pub fn back_88P_11PQ_88Q<const P : usize, const Q : usize>(
   for q in 0..Q { back_88P_11P_88::<P>(a, &mut dw[q], &ds[q]); }
 }
 
+// Use back_bias_88N for the 1×1 bias update
+
+pub fn prop_88P_11PQ_88Q<const P : usize, const Q : usize>(
+  da : &mut [Board; P], w : &[[f32; P]; Q], ds : &[Board; Q]
+) {
+  // TODO use this loop order instead?
+  /* for q in 0..Q {
+    let qs = &ds[q];
+    let qs1 = simd_load!(qs,  0);
+    let qs2 = simd_load!(qs,  8);
+    let qs3 = simd_load!(qs, 16);
+    let qs4 = simd_load!(qs, 24);
+    let qs5 = simd_load!(qs, 32);
+    let qs6 = simd_load!(qs, 40);
+    let qs7 = simd_load!(qs, 48);
+    let qs8 = simd_load!(qs, 56);
+    let qw = &w[q];
+    for p in 0..P {
+      let pa = &mut da[p];
+      let vw = Simd::<f32, 8>::splat(qw[p]);
+      simd_incr!(pa,  0, qs1 * vw);
+      simd_incr!(pa,  8, qs2 * vw);
+      simd_incr!(pa, 16, qs3 * vw);
+      simd_incr!(pa, 24, qs4 * vw);
+      simd_incr!(pa, 32, qs5 * vw);
+      simd_incr!(pa, 40, qs6 * vw);
+      simd_incr!(pa, 48, qs7 * vw);
+      simd_incr!(pa, 56, qs8 * vw);
+    }
+  } */
+  for p in 0..P {
+    let pa = &mut da[p];
+    let mut pa1 = simd_load!(pa,  0);
+    let mut pa2 = simd_load!(pa,  8);
+    let mut pa3 = simd_load!(pa, 16);
+    let mut pa4 = simd_load!(pa, 24);
+    let mut pa5 = simd_load!(pa, 32);
+    let mut pa6 = simd_load!(pa, 40);
+    let mut pa7 = simd_load!(pa, 48);
+    let mut pa8 = simd_load!(pa, 56);
+    for q in 0..Q {
+      let qs = &ds[q];
+      let vw = Simd::<f32, 8>::splat(w[q][p]);
+      pa1 += simd_load!(qs,  0) * vw;
+      pa2 += simd_load!(qs,  8) * vw;
+      pa3 += simd_load!(qs, 16) * vw;
+      pa4 += simd_load!(qs, 24) * vw;
+      pa5 += simd_load!(qs, 32) * vw;
+      pa6 += simd_load!(qs, 40) * vw;
+      pa7 += simd_load!(qs, 48) * vw;
+      pa8 += simd_load!(qs, 56) * vw;
+    }
+    simd_store!(pa,  0, pa1);
+    simd_store!(pa,  8, pa2);
+    simd_store!(pa, 16, pa3);
+    simd_store!(pa, 24, pa4);
+    simd_store!(pa, 32, pa5);
+    simd_store!(pa, 40, pa6);
+    simd_store!(pa, 48, pa7);
+    simd_store!(pa, 56, pa8);
+  }
+}
+
 /* FORWARD * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 pub fn fwd_z88P_KKP_11<const P : usize>(
@@ -565,7 +734,7 @@ fn fwd_z88P_KKP_88<const P : usize>(
   for r in 0..8 {
     for f in 0..8 {
       let ofs = r * 8 + f;
-      s[ofs] = t[r][f].as_array()[..K].into_iter().sum::<f32>();
+      s[ofs] += t[r][f].as_array()[..K].into_iter().sum::<f32>();
     }
   }
 }

@@ -3,7 +3,6 @@
 
 use crate::color::{WB, Color::*};
 use crate::conv::*;
-use crate::dest::*;
 use crate::misc::{vmirror, piece_destinations, pawn_attacks};
 use crate::piece::{KQRBNP, Kind, Kind::*};
 use crate::rand::{Rand, RandDist, init_rand};
@@ -42,25 +41,50 @@ fn d_compress(x : f32) -> f32
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
-const INP : usize = 36;
-const HL1 : usize = 64;
+const COL : usize =  8; // Number of columns
+
+const FIX : usize = 12;
+const VAR : usize = 18;
+const INP : usize = FIX + VAR;
+const HL1 : usize = 16;
+const CX2 : usize = 16; // Kernels per column
+const CX3 : usize = 16;
+const CX4 : usize = CX2;
+const HL4 : usize = CX4 * COL;
 const OUT : usize =  7;
+
+// 12 + 12 + 6 = 30 inputs
+// 12 + HL1 squeeze-excitation dense inputs
+//      HL1 squeeze-excitation dense outputs
+// 30 + HL1 inputs to next hidden layer
 
 #[derive(Clone)]
 #[repr(align(32))]
 pub struct PolicyNetwork {
   pub cw1 : [[f32; INP]; HL1],
   pub cb1 : [ Board    ; HL1],
-  pub gw1 : [[f32; HL1]; HL1],
-  pub gb1 : [ f32      ; HL1],
 
-  pub cw2 : [[Kernel; HL1]; OUT],
-  pub cb2 : [ Board       ; OUT],
+  pub gw1 : [[f32; FIX+HL1]; VAR+HL1],
+  pub gb1 : [ f32          ; VAR+HL1],
+
+  pub w2 : [[[Kernel; INP+HL1]; CX2]; COL],
+  pub b2 : [[ Board           ; CX2]; COL],
+
+  pub w3 : [[[Kernel; CX2]; CX3]; COL],
+  pub b3 : [[ Board       ; CX3]; COL],
+
+  pub w4 : [[[Kernel; CX3]; CX4]; COL],
+  pub b4 : [[ Board       ; CX4]; COL],
+
+  pub gw5 : [[[f32; HL4]; HL4]; OUT],
+  pub gb5 : [[ f32      ; HL4]; OUT],
+
+  pub b5  : [Board; OUT]
 }
 
 #[repr(align(32))]
 pub struct PolicyBuffer {
-  pub a1 : [ZxtBoard; HL1]
+  pub out : [Board; OUT]
 }
 
 impl PolicyBuffer {
@@ -96,12 +120,14 @@ impl PolicyNetwork {
   }
 
   pub fn read(&self,
-    layer : usize, n : usize, x : usize, r : usize, f : usize
+    layer : usize, c : usize, n : usize, x : usize, r : usize, f : usize
   ) -> f32
   {
     return match layer {
       1 => self.cw1[n][x],
-      2 => self.cw2[n][x][r*8+f],
+      2 => self.w2[c][n][x][r*8+f],
+      3 => self.w3[c][n][x][r*8+f],
+      4 => self.w4[c][n][x][r*8+f],
       _ => panic!()
     };
   }
@@ -182,24 +208,46 @@ impl PolicyNetwork {
 
   pub fn perturb(&mut self)
   {
-    let s = (INP as f32).sqrt().recip();
+    let s = (8.0_f32).sqrt().recip();
     for q in 0..HL1 {
       for p in 0..INP {
         self.cw1[q][p] = f32::triangular() * s;
       }
     }
-
-    let s = (HL1 as f32).sqrt().recip();
+    let s = ((FIX+HL1) as f32).sqrt().recip();
     for q in 0..HL1 {
-      for p in 0..HL1 {
+      for p in 0..(FIX+HL1) {
         self.gw1[q][p] = f32::triangular() * s;
       }
     }
 
-    let s = ((HL1 * K * K) as f32).sqrt().recip();
-    for q in 0..OUT {
-      for p in 0..HL1 {
-        for x in 0..K { for y in 0..K { self.cw2[q][p][x*8+y] = f32::triangular() * s; } }
+    for c in 0..COL {
+      let s = (((INP+HL1) * K * K) as f32).sqrt().recip();
+      for q in 0..CX2 {
+        for p in 0..(INP+HL1) {
+          for x in 0..K { for y in 0..K { self.w2[c][q][p][x*8+y] = f32::triangular() * s; } }
+        }
+      }
+      let s = ((CX2 * K * K) as f32).sqrt().recip();
+      for q in 0..CX3 {
+        for p in 0..CX2 {
+          for x in 0..K { for y in 0..K { self.w3[c][q][p][x*8+y] = f32::triangular() * s; } }
+        }
+      }
+      let s = ((CX3 * K * K) as f32).sqrt().recip();
+      for q in 0..CX4 {
+        for p in 0..CX3 {
+          for x in 0..K { for y in 0..K { self.w4[c][q][p][x*8+y] = f32::triangular() * s; } }
+        }
+      }
+    }
+
+    let s = (HL4 as f32).sqrt().recip();
+    for o in 0..OUT {
+      for q in 0..HL4 {
+        for p in 0..HL4 {
+          self.gw5[o][q][p] = f32::triangular() * s;
+        }
       }
     }
   }
@@ -247,13 +295,31 @@ impl PolicyNetwork {
     return Ok(());
   }
 
+  pub fn save_default(&self) -> std::io::Result<()>
+  {
+    let mut w = BufWriter::new(File::create("default.kdnn")?);
+    let bytes = unsafe { std::mem::transmute::<_,&[u8; 4*NUM_PARAMS]>(self) };
+    w.write_all(bytes)?;
+    return Ok(());
+  }
+
   pub fn save_image(&self, path : &str, layer : usize) -> std::io::Result<()>
   {
-    let (feat, prev) = match layer {
-      1 => (HL1, INP),
-      2 => (OUT, HL1),
+    let columns = match layer {
+      1 => 1,
+      2 => COL,
+      3 => COL,
+      4 => COL,
       _ => panic!()
     };
+    let (curr, prev) = match layer {
+      1 => (HL1, INP),
+      2 => (CX2, INP+HL1),
+      3 => (CX3, CX2),
+      4 => (CX4, CX3),
+      _ => panic!()
+    };
+    let feat = curr * columns;
     let upscale = 1;
     let width  = K*upscale*prev + prev - 1;
     let height = K*upscale*feat + feat - 1;
@@ -276,14 +342,16 @@ impl PolicyNetwork {
             if !leftmost { out.write(&border)?;}
             leftmost = false;
             for file in 0..K {
-              let w = self.read(layer, n, x, rank, file);
+              let c = n / curr;
+              let n = n - (curr * c);
+              let w = self.read(layer, c, n, x, rank, file);
               let normed = (1.0 + (w * k).exp2()).recip();
               debug_assert!(
                 1.0 >= normed && normed >= 0.0,
                 "out of range ({} {})", normed, w
               );
-              let c = (normed * 256.0).round() as usize;
-              for _ in 0..upscale { out.write(&PALETTE[c])?; }
+              let i = (normed * 256.0).round() as usize;
+              for _ in 0..upscale { out.write(&PALETTE[i])?; }
             }
           }
         }
@@ -301,6 +369,9 @@ impl PolicyNetwork {
   {
     let mut sides  : [u64;  2] = [0;  2];
     let mut boards : [u64; 12] = [0; 12];
+
+    let mut inp : [Board; INP] = [[0.0; 64]; INP];
+    let mut gi1 = [0.0; FIX+HL1];
 
     match state.turn {
       White => {
@@ -320,16 +391,48 @@ impl PolicyNetwork {
       }
     }
 
-    let mut inp : [Board; INP] = [[0.0; 64]; INP];
+    /* for y in (0..2).rev() {
+      for r in (0..8).rev() {
+        for x0 in 0..2 {
+          for x1 in 0..3 {
+            let b = 24 + x0*6 + y*3 + x1;
+            for f in 0..8 {
+              let q = r*8 + f;
+              let parity = (r + f) % 2 == 0;
+              let bg;
+              if inp[b][q] == 0.0 {
+                bg = if parity { (16, 16, 16) } else { (32, 32, 32) };
+              }
+              else {
+                bg = if parity { (180, 16, 32) } else { (212, 32, 48) };
+              }
+              eprint!("\x1B[48;2;{};{};{}m  ", bg.0, bg.1, bg.2);
+            }
+            eprint!("\x1B[0m  ");
+          }
+        }
+        eprintln!();
+      }
+      eprintln!();
+    } */
 
     let composite = sides[White] | sides[Black];
     for color in WB {
       let ofs = color as usize * 6;
-      let no_friendly_q  =     composite & !boards[ofs + Queen  as usize];
-      let no_friendly_qr = no_friendly_q & !boards[ofs + Rook   as usize];
-      let no_friendly_qb = no_friendly_q & !boards[ofs + Bishop as usize];
       for knd in KQRBNP {
         let mut sources = boards[ofs + knd as usize];
+        if sources != 0 {
+          let idx = (color as usize) * 6 + (knd as usize);
+          let cnt = sources.count_ones() as f32;
+          gi1[idx] = match knd {
+            King   => 1.0,
+            Queen  => cnt,
+            Rook   => cnt * 0.5,
+            Bishop => cnt * 0.5,
+            Knight => cnt * 0.5,
+            Pawn   => cnt * 0.125
+          };
+        }
         while sources != 0 {
           let src = sources.trailing_zeros() as usize;
 
@@ -347,28 +450,19 @@ impl PolicyNetwork {
             attacks &= attacks - 1;
           }
 
-          let idx = 24 + (color as usize) * 3 + (knd as usize) - 1;
-          let mut batteries = match knd {
-            Queen  =>   rook_destinations(no_friendly_qr, src)
-            |         bishop_destinations(no_friendly_qb, src),
-            Rook   =>   rook_destinations(no_friendly_qr, src),
-            Bishop => bishop_destinations(no_friendly_qb, src),
-            _ => { sources &= sources - 1; continue; }
-          } & !dests;
-          while batteries != 0 {
-            let bat = batteries.trailing_zeros() as usize;
-            inp[idx][bat] += 1.0;
-            batteries &= batteries - 1;
+          if (knd as usize) < (Queen as usize)
+            || (Bishop as usize) < (knd as usize) {
+            sources &= sources - 1;
+            continue;
           }
 
-          let idx = 30 + (color as usize) * 3 + (knd as usize) - 1;
-          let mut pins =
-            piece_destinations(knd, src, composite & !dests)
-            & !dests;
-          while pins != 0 {
-            let pin = pins.trailing_zeros() as usize;
-            inp[idx][pin] += 1.0;
-            pins &= pins - 1;
+          let idx = 24 + (color as usize) * 3 + (knd as usize) - 1;
+          let mut extensions =
+            piece_destinations(knd, src, composite & !dests) & !dests;
+          while extensions != 0 {
+            let ext = extensions.trailing_zeros() as usize;
+            inp[idx][ext] += 1.0;
+            extensions &= extensions - 1;
           }
 
           sources &= sources - 1;
@@ -377,37 +471,89 @@ impl PolicyNetwork {
     }
     let inp = inp;
 
-    // Forward
+    const FIX_HL1 : usize = FIX + HL1;
+    const VAR_HL1 : usize = VAR + HL1;
+    const INP_HL1 : usize = INP + HL1;
 
     let mut cs1 = self.cb1;
     fwd_88P_11PQ_88Q::<INP, HL1>(&inp, &self.cw1, &mut cs1);
+    let cs1 = cs1;
     let mut ca1 = [[0.0; 64]; HL1];
     relu_88N_88N::<HL1>(&cs1, &mut ca1);
+    let ca1 = ca1;
 
-    let mut gi1 = [0.0; HL1];
-    pool_88N_N::<HL1>(&ca1, &mut gi1);
+    let gi1_hl1 = unsafe { &mut *((&mut gi1[FIX..FIX+HL1]).as_mut_ptr() as *mut [f32; HL1]) };
+    pool_max_88N_N::<HL1>(&ca1, gi1_hl1);
+    let gi1 = gi1;
 
     let mut gs1 = self.gb1;
-    fwd_P_Q::<HL1, HL1>(&gi1, &self.gw1, &mut gs1);
-    let mut ga1 = [0.0; HL1];
-    sigm_N_N::<HL1>(&gs1, &mut ga1);
+    fwd_P_Q::<FIX_HL1, VAR_HL1>(&gi1, &self.gw1, &mut gs1);
+    let gs1 = gs1;
+    let mut ga1 = [0.0; VAR+HL1];
+    sigm_N_N::<VAR_HL1>(&gs1, &mut ga1);
+    let ga1 = ga1;
 
-    mul_88N_N_z88N::<HL1>(&ca1, &ga1, &mut buf.a1);
+    let mut a1 = [[0.0; 152]; INP+HL1];
+
+    let inp_fix = unsafe { &*((&inp[0..FIX]).as_ptr() as *const [Board; FIX]) };
+    let a1_fix = unsafe { &mut *((&mut a1[0..FIX]).as_mut_ptr() as *mut [ZxtBoard; FIX]) };
+    zero_extend::<FIX>(inp_fix, a1_fix);
+
+    let inp_var = unsafe { &*((&inp[FIX..FIX+VAR]).as_ptr() as *const [Board; VAR]) };
+    let ga1_var = unsafe { &*((&ga1[0..VAR]).as_ptr() as *const [f32; VAR]) };
+    let a1_var = unsafe { &mut *((&mut a1[FIX..FIX+VAR]).as_mut_ptr() as *mut [ZxtBoard; VAR]) };
+    mul_88N_N_z88N::<VAR>(inp_var, ga1_var, a1_var);
+
+    let ga1_hl1 = unsafe { &*((&ga1[VAR..VAR+HL1]).as_ptr() as *const [f32; HL1]) };
+    let a1_hl1 = unsafe { &mut *((&mut a1[INP..INP+HL1]).as_mut_ptr() as *mut [ZxtBoard; HL1]) };
+    mul_88N_N_z88N::<HL1>(&ca1, ga1_hl1, a1_hl1);
+
+    let a1 = a1;
+
+    let mut s2 = self.b2;
+    let mut a2 = [[[0.0; 152]; CX2]; COL];
+    for c in 0..COL {
+      fwd_z88P_KKPQ_88Q::<INP_HL1, CX2>(&a1, &self.w2[c], &mut s2[c]);
+      relu_88N_z88N::<CX2>(&s2[c], &mut a2[c]);
+    }
+    let a2 = a2;
+
+    let mut s3 = self.b3;
+    let mut a3 = [[[0.0; 152]; CX3]; COL];
+    for c in 0..COL {
+      fwd_z88P_KKPQ_88Q::<CX2, CX3>(&a2[c], &self.w3[c], &mut s3[c]);
+      relu_88N_z88N::<CX3>(&s3[c], &mut a3[c]);
+    }
+    let a3 = a3;
+
+    let mut s4 = self.b4;
+    let mut a4 = [[[0.0; 64]; CX4]; COL];
+    for c in 0..COL {
+      add_88N_88N::<CX4>(&s2[c], &mut s4[c]);
+      fwd_z88P_KKPQ_88Q::<CX3, CX4>(&a3[c], &self.w4[c], &mut s4[c]);
+      relu_88N_88N::<CX4>(&s4[c], &mut a4[c]);
+    }
+    let a4 = a4;
+
+    let a4_all = unsafe { std::mem::transmute::<_, &[Board; HL4]>(&a4) };
+
+    let mut gi5 = [0.0; HL4];
+    pool_max_88N_N::<HL4>(a4_all, &mut gi5);
+    let gi5 = gi5;
+
+    let mut gs5 = self.gb5;
+    let mut ga5 = [[0.0; HL4]; OUT];
+    buf.out = self.b5;
+    for o in 0..OUT {
+      fwd_P_Q::<HL4, HL4>(&gi5, &self.gw5[o], &mut gs5[o]);
+      sigm_N_N::<HL4>(&gs5[o], &mut ga5[o]);
+      fwd_88P_11P_88::<HL4>(a4_all, &ga5[o], &mut buf.out[o]);  // dot product
+    }
   }
 
   pub fn evaluate(&self, buf : &PolicyBuffer, kind : Kind, src : usize, dst : usize) -> f32
   {
-    let dst_rank = dst / 8;
-    let dst_file = dst % 8;
-    let s2_dst = self.cb2[kind][dst]
-               + fwd_z88P_KKP_11::<HL1>(&buf.a1, &self.cw2[kind], dst_rank, dst_file);
-
-    let src_rank = src / 8;
-    let src_file = src % 8;
-    let s2_src = self.cb2[6][src]
-               + fwd_z88P_KKP_11::<HL1>(&buf.a1, &self.cw2[6], src_rank, src_file);
-
-    return s2_src + s2_dst;
+    return buf.out[kind][dst] + buf.out[6][src];
   }
 }
 
@@ -425,6 +571,7 @@ fn fwdback(
   let mut boards : [u64; 12] = [0; 12];
 
   let mut inp : [Board; INP] = [[0.0; 64]; INP];
+  let mut gi1 = [0.0; FIX+HL1];
 
   for c in WB {
     let color = if c == mini.turn() { White } else { Black };
@@ -456,11 +603,20 @@ fn fwdback(
   let composite = sides[White] | sides[Black];
   for color in WB {
     let ofs = color as usize * 6;
-    let no_friendly_q  =     composite & !boards[ofs + Queen  as usize];
-    let no_friendly_qr = no_friendly_q & !boards[ofs + Rook   as usize];
-    let no_friendly_qb = no_friendly_q & !boards[ofs + Bishop as usize];
     for knd in KQRBNP {
       let mut sources = boards[ofs + knd as usize];
+      if sources != 0 {
+        let idx = (color as usize) * 6 + (knd as usize);
+        let cnt = sources.count_ones() as f32;
+        gi1[idx] = match knd {
+          King   => 1.0,
+          Queen  => cnt,
+          Rook   => cnt * 0.5,
+          Bishop => cnt * 0.5,
+          Knight => cnt * 0.5,
+          Pawn   => cnt * 0.125
+        };
+      }
       while sources != 0 {
         let src = sources.trailing_zeros() as usize;
 
@@ -475,28 +631,19 @@ fn fwdback(
           attacks &= attacks - 1;
         }
 
-        let idx = 24 + (color as usize) * 3 + (knd as usize) - 1;
-        let mut batteries = match knd {
-          Queen  =>   rook_destinations(no_friendly_qr, src)
-          |         bishop_destinations(no_friendly_qb, src),
-          Rook   =>   rook_destinations(no_friendly_qr, src),
-          Bishop => bishop_destinations(no_friendly_qb, src),
-          _ => { sources &= sources - 1; continue; }
-        } & !dests;
-        while batteries != 0 {
-          let bat = batteries.trailing_zeros() as usize;
-          inp[idx][bat] += 1.0;
-          batteries &= batteries - 1;
+        if (knd as usize) < (Queen as usize)
+          || (Bishop as usize) < (knd as usize) {
+          sources &= sources - 1;
+          continue;
         }
 
-        let idx = 30 + (color as usize) * 3 + (knd as usize) - 1;
-        let mut pins =
-          piece_destinations(knd, src, composite & !dests)
-          & !dests;
-        while pins != 0 {
-          let pin = pins.trailing_zeros() as usize;
-          inp[idx][pin] += 1.0;
-          pins &= pins - 1;
+        let idx = 24 + (color as usize) * 3 + (knd as usize) - 1;
+        let mut extensions =
+          piece_destinations(knd, src, composite & !dests) & !dests;
+        while extensions != 0 {
+          let ext = extensions.trailing_zeros() as usize;
+          inp[idx][ext] += 1.0;
+          extensions &= extensions - 1;
         }
 
         sources &= sources - 1;
@@ -507,24 +654,92 @@ fn fwdback(
 
   // Forward
 
+  const FIX_HL1 : usize = FIX + HL1;
+  const VAR_HL1 : usize = VAR + HL1;
+  const INP_HL1 : usize = INP + HL1;
+
   let mut cs1 = ps.cb1;
   fwd_88P_11PQ_88Q::<INP, HL1>(&inp, &ps.cw1, &mut cs1);
+  let cs1 = cs1;
   let mut ca1 = [[0.0; 64]; HL1];
   relu_88N_88N::<HL1>(&cs1, &mut ca1);
+  let ca1 = ca1;
 
-  let mut gi1 = [0.0; HL1];
-  pool_88N_N::<HL1>(&ca1, &mut gi1);
+  let gi1_hl1 = unsafe { &mut *((&mut gi1[FIX..FIX+HL1]).as_mut_ptr() as *mut [f32; HL1]) };
+  pool_max_88N_N::<HL1>(&ca1, gi1_hl1);
+  let gi1 = gi1;
 
   let mut gs1 = ps.gb1;
-  fwd_P_Q::<HL1, HL1>(&gi1, &ps.gw1, &mut gs1);
-  let mut ga1 = [0.0; HL1];
-  sigm_N_N::<HL1>(&gs1, &mut ga1);
+  fwd_P_Q::<FIX_HL1, VAR_HL1>(&gi1, &ps.gw1, &mut gs1);
+  let gs1 = gs1;
+  let mut ga1 = [0.0; VAR+HL1];
+  sigm_N_N::<VAR_HL1>(&gs1, &mut ga1);
+  let ga1 = ga1;
 
-  let mut a1 = [[0.0; 152]; HL1];
-  mul_88N_N_z88N::<HL1>(&ca1, &ga1, &mut a1);
+  let mut a1 = [[0.0; 152]; INP+HL1];
 
-  let mut dE_da1 = [[0.0; 152]; HL1];
+  let inp_fix = unsafe { &*((&inp[0..FIX]).as_ptr() as *const [Board; FIX]) };
+  let a1_fix = unsafe { &mut *((&mut a1[0..FIX]).as_mut_ptr() as *mut [ZxtBoard; FIX]) };
+  zero_extend::<FIX>(inp_fix, a1_fix);
 
+  let inp_var = unsafe { &*((&inp[FIX..FIX+VAR]).as_ptr() as *const [Board; VAR]) };
+  let ga1_var = unsafe { &*((&ga1[0..VAR]).as_ptr() as *const [f32; VAR]) };
+  let a1_var = unsafe { &mut *((&mut a1[FIX..FIX+VAR]).as_mut_ptr() as *mut [ZxtBoard; VAR]) };
+  mul_88N_N_z88N::<VAR>(inp_var, ga1_var, a1_var);
+
+  let ga1_hl1 = unsafe { &*((&ga1[VAR..VAR+HL1]).as_ptr() as *const [f32; HL1]) };
+  let a1_hl1 = unsafe { &mut *((&mut a1[INP..INP+HL1]).as_mut_ptr() as *mut [ZxtBoard; HL1]) };
+  mul_88N_N_z88N::<HL1>(&ca1, ga1_hl1, a1_hl1);
+
+  let a1 = a1;
+
+  let mut s2 = ps.b2;
+  let mut a2 = [[[0.0; 152]; CX2]; COL];
+  for c in 0..COL {
+    fwd_z88P_KKPQ_88Q::<INP_HL1, CX2>(&a1, &ps.w2[c], &mut s2[c]);
+    relu_88N_z88N::<CX2>(&s2[c], &mut a2[c]);
+  }
+  let s2 = s2;
+  let a2 = a2;
+
+  let mut s3 = ps.b3;
+  let mut a3 = [[[0.0; 152]; CX3]; COL];
+  for c in 0..COL {
+    fwd_z88P_KKPQ_88Q::<CX2, CX3>(&a2[c], &ps.w3[c], &mut s3[c]);
+    relu_88N_z88N::<CX3>(&s3[c], &mut a3[c]);
+  }
+  let s3 = s3;
+  let a3 = a3;
+
+  let mut s4 = ps.b4;
+  let mut a4 = [[[0.0; 64]; CX4]; COL];
+  for c in 0..COL {
+    add_88N_88N::<CX4>(&s2[c], &mut s4[c]);
+    fwd_z88P_KKPQ_88Q::<CX3, CX4>(&a3[c], &ps.w4[c], &mut s4[c]);
+    relu_88N_88N::<CX4>(&s4[c], &mut a4[c]);
+  }
+  let s4 = s4;
+  let a4 = a4;
+
+  let a4_all = unsafe { std::mem::transmute::<_, &[Board; HL4]>(&a4) };
+
+  let mut gi5 = [0.0; HL4];
+  pool_max_88N_N::<HL4>(a4_all, &mut gi5);
+  let gi5 = gi5;
+
+  let mut gs5 = ps.gb5;
+  let mut ga5 = [[0.0; HL4]; OUT];
+  let mut out = ps.b5;
+  for o in 0..OUT {
+    fwd_P_Q::<HL4, HL4>(&gi5, &ps.gw5[o], &mut gs5[o]);
+    sigm_N_N::<HL4>(&gs5[o], &mut ga5[o]);
+    fwd_88P_11P_88::<HL4>(a4_all, &ga5[o], &mut out[o]); // dot product
+  }
+  let gs5 = gs5;
+  let ga5 = ga5;
+  let out = out;
+
+  let mut dE_dout = [[0.0; 64]; OUT];
   let mut sum_error = 0.0;
   let score = match mini.turn() { White => mini.score, Black => -mini.score } as f32 / 100.0;
 
@@ -537,54 +752,102 @@ fn fwdback(
     let src  = (m >>  6) & 63;
     let dst  =  m        & 63;
 
-    let dst_rank = dst / 8;
-    let dst_file = dst % 8;
-    let s2_dst = ps.cb2[kind][dst]
-               + fwd_z88P_KKP_11::<HL1>(&a1, &ps.cw2[kind], dst_rank, dst_file);
+    let pred = out[kind][dst] + out[6][src];
 
-    let src_rank = src / 8;
-    let src_file = src % 8;
-    let s2_src = ps.cb2[6][src]
-               + fwd_z88P_KKP_11::<HL1>(&a1, &ps.cw2[6], src_rank, src_file);
+  // Error
 
-    let s2 = s2_src + s2_dst;
+    let diff = compress(score - pred) - compress(hyp);
+    let dE_dpred = diff * d_compress(score - pred) * -1.0;
 
-    // Error
+  // Backward
 
-    let diff = compress(score - s2) - compress(hyp);
-    let dE_ds2 = diff * d_compress(score - s2) * -1.0;
-
-    ds.cb2[kind][dst] += dE_ds2;
-    ds.cb2[6   ][src] += dE_ds2;
-    back_z88P_KKP_11::<HL1>(&a1, &mut ds.cw2[kind], dE_ds2, dst_rank, dst_file);
-    back_z88P_KKP_11::<HL1>(&a1, &mut ds.cw2[6],    dE_ds2, src_rank, src_file);
-
-    prop_z88P_KKP_11::<HL1>(&mut dE_da1, &ps.cw2[kind], dE_ds2, dst_rank, dst_file);
-    prop_z88P_KKP_11::<HL1>(&mut dE_da1, &ps.cw2[6],    dE_ds2, src_rank, src_file);
+    dE_dout[kind][dst] += dE_dpred;
+    dE_dout[6][src]    += dE_dpred;
 
     let diff = diff as f64;
     let error = diff * diff;
     sum_error += error;
   }
 
-  // Backward
+  back_bias_88N::<OUT>(&mut ds.b5, &dE_dout);
 
-  let mut dE_dga1 = [0.0; HL1];
-  mul_88N_N_z88N_prop_N::<HL1>(&ca1, &mut dE_dga1, &dE_da1);
+  let mut dE_da4 = [[[0.0; 64]; CX4]; COL];
+  let dE_da4_all = unsafe { std::mem::transmute::<_, &mut [Board; HL4]>(&mut dE_da4) };
 
+  for o in 0..OUT {
+    let mut dE_dga5 = [0.0; HL4];
+    dot_88N_N_88_prop_N::<HL4>(a4_all, &mut dE_dga5, &dE_dout[o]);
+    dot_88N_N_88_prop_88N::<HL4>(dE_da4_all, &ga5[o], &dE_dout[o]);
+
+    let mut dE_dgs5 = [0.0; HL4];
+    prop_sigm_N_N::<HL4>(&mut dE_dgs5, &dE_dga5, &gs5[o]);
+    back_bias_N::<HL4>(&mut ds.gb5[o], &dE_dgs5);
+    back_P_Q::<HL4, HL4>(&gi5, &mut ds.gw5[o], &dE_dgs5);
+    let mut dE_dgi5 = [0.0; HL4];
+    prop_P_Q::<HL4, HL4>(&mut dE_dgi5, &ps.gw5[o], &dE_dgs5);
+    back_pool_max_88N_N::<HL4>(dE_da4_all, &dE_dgi5, a4_all, &gi5);
+  }
+
+  let mut dE_ds4 = [[[0.0; 64]; CX4]; COL];
+  let mut dE_da3 = [[[0.0; 152]; CX3]; COL];
+  for c in 0..COL {
+    prop_relu_88N_88N::<CX4>(&mut dE_ds4[c], &dE_da4[c], &s4[c]);
+    back_bias_88N::<CX4>(&mut ds.b4[c], &dE_ds4[c]);
+    back_z88P_KKPQ_88Q::<CX3, CX4>(&a3[c], &mut ds.w4[c], &dE_ds4[c]);
+    prop_z88P_KKPQ_88Q::<CX3, CX4>(&mut dE_da3[c], &ps.w4[c], &dE_ds4[c]);
+  }
+  let dE_da3 = dE_da3;
+
+  let mut dE_ds3 = [[[0.0; 64]; CX3]; COL];
+  let mut dE_da2 = [[[0.0; 152]; CX2]; COL];
+  for c in 0..COL {
+    prop_relu_88N_z88N::<CX3>(&mut dE_ds3[c], &dE_da3[c], &s3[c]);
+    back_bias_88N::<CX3>(&mut ds.b3[c], &dE_ds3[c]);
+    back_z88P_KKPQ_88Q::<CX2, CX3>(&a2[c], &mut ds.w3[c], &dE_ds3[c]);
+    prop_z88P_KKPQ_88Q::<CX2, CX3>(&mut dE_da2[c], &ps.w3[c], &dE_ds3[c]);
+  }
+  let dE_da2 = dE_da2;
+
+  let mut dE_ds2 = [[[0.0; 64]; CX2]; COL];
+  let mut dE_da1 = [[0.0; 152]; INP+HL1];
+  for c in 0..COL {
+    prop_relu_88N_z88N::<CX2>(&mut dE_ds2[c], &dE_da2[c], &s2[c]);
+    add_88N_88N::<CX4>(&dE_ds4[c], &mut dE_ds2[c]);
+    back_bias_88N::<CX2>(&mut ds.b2[c], &dE_ds2[c]);
+
+    back_z88P_KKPQ_88Q::<INP_HL1, CX2>(&a1, &mut ds.w2[c], &dE_ds2[c]);
+    prop_z88P_KKPQ_88Q::<INP_HL1, CX2>(&mut dE_da1, &ps.w2[c], &dE_ds2[c]);
+  }
+  let dE_da1 = dE_da1;
+
+  let mut dE_dga1 = [0.0; VAR+HL1];
+  let dE_da1_var = unsafe { &*((&dE_da1[FIX..FIX+VAR]).as_ptr() as *const [ZxtBoard; VAR]) };
+  let dE_da1_hl1 = unsafe { &*((&dE_da1[INP..INP+HL1]).as_ptr() as *const [ZxtBoard; HL1]) };
+  let dE_dga1_var = unsafe { &mut *((&mut dE_dga1[0..VAR]).as_mut_ptr() as *mut [f32; VAR]) };
+  let dE_dga1_hl1 = unsafe { &mut *((&mut dE_dga1[VAR..VAR+HL1]).as_mut_ptr() as *mut [f32; HL1]) };
+  mul_88N_N_z88N_prop_N::<VAR>(inp_var, dE_dga1_var, dE_da1_var);
+  mul_88N_N_z88N_prop_N::<HL1>(&ca1, dE_dga1_hl1, dE_da1_hl1);
+  let dE_dga1 = dE_dga1;
+
+  let dE_da1_hl1 = unsafe { &*((&dE_da1[INP..INP+HL1]).as_ptr() as *const [ZxtBoard; HL1]) };
   let mut dE_dca1 = [[0.0; 64]; HL1];
-  mul_88N_N_z88N_prop_88N::<HL1>(&mut dE_dca1, &ga1, &dE_da1);
+  mul_88N_N_z88N_prop_88N::<HL1>(&mut dE_dca1, ga1_hl1, dE_da1_hl1);
 
-  let mut dE_dgs1 = [0.0; HL1];
-  prop_sigm_N_N::<HL1>(&mut dE_dgs1, &dE_dga1, &gs1);
-  back_bias_N::<HL1>(&mut ds.gb1, &dE_dgs1);
-  back_P_Q::<HL1, HL1>(&gi1, &mut ds.gw1, &dE_dgs1);
-  let mut dE_dgi1 = [0.0; HL1];
-  prop_P_Q::<HL1, HL1>(&mut dE_dgi1, &ps.gw1, &dE_dgs1);
-  back_pool_88N_N::<HL1>(&mut dE_dca1, &dE_dgi1);
+  let mut dE_dgs1 = [0.0; VAR_HL1];
+  prop_sigm_N_N::<VAR_HL1>(&mut dE_dgs1, &dE_dga1, &gs1);
+  let dE_dgs1 = dE_dgs1;
+  back_bias_N::<VAR_HL1>(&mut ds.gb1, &dE_dgs1);
+  back_P_Q::<FIX_HL1, VAR_HL1>(&gi1, &mut ds.gw1, &dE_dgs1);
+  let mut dE_dgi1 = [0.0; FIX_HL1];
+  prop_P_Q::<FIX_HL1, VAR_HL1>(&mut dE_dgi1, &ps.gw1, &dE_dgs1);
+  let dE_dgi1 = dE_dgi1;
+  let dE_dgi1_hl1 = unsafe { &*((&dE_dgi1[FIX..FIX+HL1]).as_ptr() as *const [f32; HL1]) };
+  back_pool_max_88N_N::<HL1>(&mut dE_dca1, dE_dgi1_hl1, &ca1, gi1_hl1);
+  let dE_dca1 = dE_dca1;
 
   let mut dE_dcs1 = [[0.0; 64]; HL1];
   prop_relu_88N_88N::<HL1>(&mut dE_dcs1, &dE_dca1, &cs1);
+  let dE_dcs1 = dE_dcs1;
 
   back_bias_88N::<HL1>(&mut ds.cb1, &dE_dcs1);
   back_88P_11PQ_88Q::<INP, HL1>(&inp, &mut ds.cw1, &dE_dcs1);
@@ -611,7 +874,7 @@ fn stats(c : &PolicyNetwork, d : &PolicyNetwork) -> f64 {
 
 const rng_seed : u64 = 0;
 
-const alpha   : f32 = 1.0 / 512.0;
+const alpha   : f32 = 1.0 / 2048.0;
 const beta    : f32 = 1.0 - 1.0 / 8.0;
 const gamma   : f32 = 1.0 - 1.0 / 512.0;
 const epsilon : f32 = 1.0 / 1048576.0;
@@ -815,6 +1078,8 @@ pub fn train_policy(path : &str) -> std::io::Result<()>
       PARAMS.save(&format!("/tmp/epoch-{:03}.kdnn", epoch))?;
       PARAMS.save_image(&format!("/tmp/1-epoch-{:03}", epoch), 1)?;
       PARAMS.save_image(&format!("/tmp/2-epoch-{:03}", epoch), 2)?;
+      PARAMS.save_image(&format!("/tmp/3-epoch-{:03}", epoch), 3)?;
+      PARAMS.save_image(&format!("/tmp/4-epoch-{:03}", epoch), 4)?;
     }
 
     let training_error = total_error / moves_per_epoch as f64;

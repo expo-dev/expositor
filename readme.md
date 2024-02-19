@@ -374,7 +374,7 @@ perspective and the location of the black king determines the weights used to
 evaluate black’s position from white’s perspective. (Note that evaluating
 black’s position from white’s perspective is different than evaluating black’s
 position from black’s perspective, even if both are predicated on the position
-of black’s king!) Here is animation of such a network:
+of black’s king!) Here is an animation of such a network:
 
 <p align="center"><img src="pic/nnue-4kr-alt.gif" style="width: 32em;"></p>
 

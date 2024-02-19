@@ -561,6 +561,7 @@ impl Network {
     return Ok(());
   }
 
+  /*
   pub fn stat(&self)
   {
     use std::mem::transmute;
@@ -659,8 +660,10 @@ impl Network {
     }
     */
   }
+  */
 }
 
+/*
 fn stat_slice(xs : &[f32])
 {
   let len = xs.len();
@@ -685,3 +688,4 @@ fn stat_slice(xs : &[f32])
   let avg = xs.iter().sum::<f32>() / (len as f32);
   println!("  {min:+10.6} {p05:+10.6} {med:+10.6} {p95:+10.6} {max:+10.6} ({avg:+10.6})");
 }
+*/

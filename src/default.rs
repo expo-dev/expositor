@@ -1,11 +1,15 @@
 use crate::nnue::Network;
-
-const SIZE : usize = std::mem::size_of::<Network>();
+use crate::policy::PolicyNetwork;
 
 #[repr(C)]
 #[repr(align(32))]
 struct Container<T : ?Sized>(T);
 
-static ALIGNED : &'static Container<[u8; SIZE]> = &Container(*include_bytes!("default.nnue"));
+const  VALUE_SIZE : usize = std::mem::size_of::<Network>();
+const POLICY_SIZE : usize = std::mem::size_of::<PolicyNetwork>();
 
-pub static DEFAULT_NETWORK : &'static [u8; SIZE] = &ALIGNED.0;
+    static VALUE_ALIGNED   : &'static Container<[u8;  VALUE_SIZE]> = &Container(*include_bytes!("default.nnue"));
+pub static DEFAULT_NETWORK : &'static           [u8;  VALUE_SIZE]  = &VALUE_ALIGNED.0;
+
+    static POLICY_ALIGNED  : &'static Container<[u8; POLICY_SIZE]> = &Container(*include_bytes!("default.kdnn"));
+pub static DEFAULT_POLICY  : &'static           [u8; POLICY_SIZE]  = &POLICY_ALIGNED.0;

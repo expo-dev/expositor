@@ -219,7 +219,7 @@ pub fn set_affinity(idx : usize)
     );
 
     if ret != 0 && isatty(STDERR) {
-      eprintln!("info: set_affinity returned {} for id {}", ret, idx);
+      eprintln!("note: set_affinity returned {} for id {}", ret, idx);
     }
   }
 }
