@@ -3,7 +3,7 @@ use crate::cache::initialize_cache;
 use crate::color::Color::*;
 use crate::context::Context;
 use crate::datagen::{OpeningParams, generate_training_data};
-use crate::global::{syzygy_enabled, searching, enable_prev_gen, enable_nnue};
+use crate::global::{syzygy_enabled, searching, enable_prev_gen/*, enable_nnue*/};
 use crate::limits::SearchParams;
 use crate::movetype::Move;
 use crate::nnue::{NETWORK, Network};
@@ -96,7 +96,7 @@ pub fn uci() -> std::io::Result<()>
         println!("option name Threads type spin default {} min 1 max 252", SEARCH_THREADS_DEFAULT);
         println!("option name Overhead type spin default {} min 0 max 1000", SEARCH_OVERHEAD_DEFAULT);
         println!("option name Persist type check default {}", USE_PREV_GEN_DEFAULT);
-        println!("option name Nnue type check default true");
+/*      println!("option name Nnue type check default true"); */
         println!("option name SyzygyPath type string default <empty>");
         println!("uciok");
       }
@@ -159,7 +159,7 @@ pub fn uci() -> std::io::Result<()>
               _ => { ttyeprintln!("error: invalid or missing value"); }
             }
           }
-
+/*
           "Nnue" => {
             match val.to_lowercase().as_str() {
               "true" | "t" | "yes" | "y" => { enable_nnue(true ); }
@@ -167,7 +167,7 @@ pub fn uci() -> std::io::Result<()>
               _ => { ttyeprintln!("error: invalid or missing value"); }
             }
           }
-
+*/
           "SyzygyPath" => {
             if val.as_str() == "<empty>" {
               if syzygy_enabled() {
