@@ -9,14 +9,12 @@ use crate::misc::{
   vmirror
 };
 use crate::movetype::{Move, MoveType::PawnManoeuvre};
-use crate::nnue::{Simd32, vN1, NETWORK, king_region};
+use crate::nnue::{N1, king_region};
 use crate::piece::Kind::*;
 use crate::piece::{KQRBNP, Piece::{self, *}};
-use crate::simd::{LANES, simd_load};
+use crate::quant::{simd_copy, simd_incr, simd_decr, QUANTIZED};
 use crate::state::State;
 use crate::zobrist::rezobrist;
-
-use std::simd::Simd;
 
 // ↓↓↓ DEBUG ↓↓↓
 // pub static mut KING_MOVES  : usize = 0;
@@ -24,7 +22,7 @@ use std::simd::Simd;
 // ↑↑↑ DEBUG ↑↑↑
 
 impl State {
-  fn update_nnue(
+  fn update_s1(
     &mut self,
     wk_rdx : usize, // white king region index
     bk_rdx : usize, // black king region index
@@ -33,12 +31,11 @@ impl State {
     add    : bool
   )
   {
-    if !nnue_enabled() || self.s1.is_empty() { return; }
     let last = self.s1.len() - 1;
     let s1 = &mut self.s1[last];
 
-    let w_region = unsafe { &NETWORK.rn[wk_rdx] };
-    let b_region = unsafe { &NETWORK.rn[bk_rdx] };
+    let w_region = unsafe { &QUANTIZED.rn[wk_rdx] };
+    let b_region = unsafe { &QUANTIZED.rn[bk_rdx] };
 
     let c = piece.color();  // self.turn
     let x = match c {
@@ -46,19 +43,28 @@ impl State {
       Black => (piece as usize & 7)*64 + vmirror(sq),
     };
     if add {
-      for n in 0..vN1 { s1[White][n] += simd_load!(w_region.w1[ c][x], n); }
-      for n in 0..vN1 { s1[Black][n] += simd_load!(b_region.w1[!c][x], n); }
+      simd_incr(&mut s1[White], &w_region.w1[ c][x]);
+      simd_incr(&mut s1[Black], &b_region.w1[!c][x]);
     }
     else {
-      for n in 0..vN1 { s1[White][n] -= simd_load!(w_region.w1[ c][x], n); }
-      for n in 0..vN1 { s1[Black][n] -= simd_load!(b_region.w1[!c][x], n); }
+      simd_decr(&mut s1[White], &w_region.w1[ c][x]);
+      simd_decr(&mut s1[Black], &b_region.w1[!c][x]);
     }
+
+    // unsafe {
+    //   use crate::nnue::{S1_MAX, S1_MIN};
+    //   use std::simd::cmp::SimdPartialOrd;
+    //   for c in crate::color::WB {
+    //     for n in 0..vN1 {
+    //       S1_MAX = s1[c][n].simd_gt(S1_MAX).select(s1[c][n], S1_MAX);
+    //       S1_MIN = s1[c][n].simd_lt(S1_MIN).select(s1[c][n], S1_MIN);
+    //     }
+    //   }
+    // }
   }
 
   fn reset_s1(&mut self, color : Color, rdx : usize)
   {
-    if !nnue_enabled() || self.s1.is_empty() { return; }
-
     // ↓↓↓ DEBUG ↓↓↓
     // unsafe { RESET_COUNT += 1; }
     // ↑↑↑ DEBUG ↑↑↑
@@ -66,15 +72,14 @@ impl State {
     let last = self.s1.len() - 1;
     let s1 = &mut self.s1[last];
 
-    let region = unsafe { &NETWORK.rn[rdx] };
-    for n in 0..vN1 { s1[color][n] = simd_load!(region.b1, n); }
+    let region = unsafe { &QUANTIZED.rn[rdx] };
+    simd_copy(&mut s1[color], &region.b1);
     for kind in KQRBNP {
       let mut sources = self.boards[White+kind];
       while sources != 0 {
         let src = sources.trailing_zeros() as usize;
         let x = (kind as usize)*64 + src;
-
-        for n in 0..vN1 { s1[color][n] += simd_load!(region.w1[color][x], n); }
+        simd_incr(&mut s1[color], &region.w1[color][x]);
         sources &= sources - 1;
       }
     }
@@ -83,29 +88,34 @@ impl State {
       while sources != 0 {
         let src = sources.trailing_zeros() as usize;
         let x = (kind as usize)*64 + vmirror(src);
-        for n in 0..vN1 { s1[color][n] += simd_load!(region.w1[!color][x], n); }
+        simd_incr(&mut s1[color], &region.w1[!color][x]);
         sources &= sources - 1;
       }
     }
   }
 
+  fn copy_s1(&mut self)
+  {
+    // NOTE this is somewhat unsafe, but the only way
+    //   I've found to prevent an unnecessary copy.
+    self.s1.reserve(1);
+    let new_len = self.s1.len() + 1;
+    unsafe { self.s1.set_len(new_len); }
+    let old_end : *const [[i16; N1]; 2] =    & self.s1[new_len-2];
+    let new_end :   *mut [[i16; N1]; 2] = &mut self.s1[new_len-1];
+    unsafe { std::ptr::copy_nonoverlapping(old_end, new_end, 1); }
+    // Alternatively,
+    //   let new_end : *mut [f32; N1] = &mut self.s1[new_len-1];
+    //   let old_end = &self.s1[new_len-2];
+    //   unsafe { for n in 0..N1 { (*new_end)[n] = old_end[n]; } }
+  }
+
   pub fn apply(&mut self, m : &Move)
   {
+    let valid_s1 = nnue_enabled() && !self.s1.is_empty();
+
     // Step 0. Copy the accumulators
-    if nnue_enabled() && !self.s1.is_empty() {
-      // NOTE this is somewhat unsafe, but the only way
-      //   I've found to prevent an unnecessary copy.
-      self.s1.reserve(1);
-      let new_len = self.s1.len() + 1;
-      unsafe { self.s1.set_len(new_len); }
-      let old_end : *const [[Simd32; vN1]; 2] =    & self.s1[new_len-2];
-      let new_end :   *mut [[Simd32; vN1]; 2] = &mut self.s1[new_len-1];
-      unsafe { std::ptr::copy_nonoverlapping(old_end, new_end, 1); }
-      // Alternatively,
-      //   let new_end : *mut [f32; N1] = &mut self.s1[new_len-1];
-      //   let old_end = &self.s1[new_len-2];
-      //   unsafe { for n in 0..N1 { (*new_end)[n] = old_end[n]; } }
-    }
+    if valid_s1 { self.copy_s1(); }
 
     let wk_rdx = king_region(        self.boards[WhiteKing].trailing_zeros() as usize );
     let bk_rdx = king_region(vmirror(self.boards[BlackKing].trailing_zeros() as usize));
@@ -122,7 +132,7 @@ impl State {
       self.sides[piece_color] ^= src_location;
 
       self.squares[m.src as usize] = Null;
-      self.update_nnue(wk_rdx, bk_rdx, m.piece, m.src as usize, false);
+      if valid_s1 { self.update_s1(wk_rdx, bk_rdx, m.piece, m.src as usize, false); }
 
       key_diff ^= PIECE_BASIS[offset + m.src as usize];
 
@@ -131,7 +141,7 @@ impl State {
       self.sides[piece_color]  ^= dst_location;
 
       self.squares[m.dst as usize] = m.promotion;
-      self.update_nnue(wk_rdx, bk_rdx, m.promotion, m.dst as usize, true);
+      if valid_s1 { self.update_s1(wk_rdx, bk_rdx, m.promotion, m.dst as usize, true); }
 
       key_diff ^= PIECE_BASIS[(m.promotion as usize)*64 + m.dst as usize];
     }
@@ -143,8 +153,10 @@ impl State {
       self.squares[m.src as usize] = Null;
       self.squares[m.dst as usize] = m.piece;
 
-      self.update_nnue(wk_rdx, bk_rdx, m.piece, m.src as usize, false);
-      self.update_nnue(wk_rdx, bk_rdx, m.piece, m.dst as usize, true);
+      if valid_s1 {
+        self.update_s1(wk_rdx, bk_rdx, m.piece, m.src as usize, false);
+        self.update_s1(wk_rdx, bk_rdx, m.piece, m.dst as usize, true);
+      }
 
       key_diff ^= PIECE_BASIS[offset + m.src as usize]
                 ^ PIECE_BASIS[offset + m.dst as usize];
@@ -152,45 +164,53 @@ impl State {
 
     if m.is_castle() {
       match m.dst {
-         2 => {
-           self.boards[WhiteRook] ^= WHITE_LONG_CASTLE_ROOK;
-           self.sides[White]      ^= WHITE_LONG_CASTLE_ROOK;
-           self.squares[0] = Null;
-           self.squares[3] = WhiteRook;
-           self.update_nnue(wk_rdx, bk_rdx, WhiteRook, 0, false);
-           self.update_nnue(wk_rdx, bk_rdx, WhiteRook, 3, true);
-           key_diff ^= PIECE_BASIS[(WhiteRook as usize)*64 + 0]
-                     ^ PIECE_BASIS[(WhiteRook as usize)*64 + 3];
-         }
-         6 => {
-           self.boards[WhiteRook] ^= WHITE_SHORT_CASTLE_ROOK;
-           self.sides[White]      ^= WHITE_SHORT_CASTLE_ROOK;
-           self.squares[5] = WhiteRook;
-           self.squares[7] = Null;
-           self.update_nnue(wk_rdx, bk_rdx, WhiteRook, 5, true);
-           self.update_nnue(wk_rdx, bk_rdx, WhiteRook, 7, false);
-           key_diff ^= PIECE_BASIS[(WhiteRook as usize)*64 + 5]
-                     ^ PIECE_BASIS[(WhiteRook as usize)*64 + 7];
-         }
+        2 => {
+          self.boards[WhiteRook] ^= WHITE_LONG_CASTLE_ROOK;
+          self.sides[White]      ^= WHITE_LONG_CASTLE_ROOK;
+          self.squares[0] = Null;
+          self.squares[3] = WhiteRook;
+          if valid_s1 {
+            self.update_s1(wk_rdx, bk_rdx, WhiteRook, 0, false);
+            self.update_s1(wk_rdx, bk_rdx, WhiteRook, 3, true);
+          }
+          key_diff ^= PIECE_BASIS[(WhiteRook as usize)*64 + 0]
+                    ^ PIECE_BASIS[(WhiteRook as usize)*64 + 3];
+        }
+        6 => {
+          self.boards[WhiteRook] ^= WHITE_SHORT_CASTLE_ROOK;
+          self.sides[White]      ^= WHITE_SHORT_CASTLE_ROOK;
+          self.squares[5] = WhiteRook;
+          self.squares[7] = Null;
+          if valid_s1 {
+            self.update_s1(wk_rdx, bk_rdx, WhiteRook, 5, true);
+            self.update_s1(wk_rdx, bk_rdx, WhiteRook, 7, false);
+          }
+          key_diff ^= PIECE_BASIS[(WhiteRook as usize)*64 + 5]
+                    ^ PIECE_BASIS[(WhiteRook as usize)*64 + 7];
+        }
         58 => {
-           self.boards[BlackRook] ^= BLACK_LONG_CASTLE_ROOK;
-           self.sides[Black]      ^= BLACK_LONG_CASTLE_ROOK;
-           self.squares[56] = Null;
-           self.squares[59] = BlackRook;
-           self.update_nnue(wk_rdx, bk_rdx, BlackRook, 56, false);
-           self.update_nnue(wk_rdx, bk_rdx, BlackRook, 59, true);
-           key_diff ^= PIECE_BASIS[(BlackRook as usize)*64 + 56]
-                     ^ PIECE_BASIS[(BlackRook as usize)*64 + 59];
+          self.boards[BlackRook] ^= BLACK_LONG_CASTLE_ROOK;
+          self.sides[Black]      ^= BLACK_LONG_CASTLE_ROOK;
+          self.squares[56] = Null;
+          self.squares[59] = BlackRook;
+          if valid_s1 {
+            self.update_s1(wk_rdx, bk_rdx, BlackRook, 56, false);
+            self.update_s1(wk_rdx, bk_rdx, BlackRook, 59, true);
+          }
+          key_diff ^= PIECE_BASIS[(BlackRook as usize)*64 + 56]
+                    ^ PIECE_BASIS[(BlackRook as usize)*64 + 59];
         }
         62 => {
-           self.boards[BlackRook] ^= BLACK_SHORT_CASTLE_ROOK;
-           self.sides[Black]      ^= BLACK_SHORT_CASTLE_ROOK;
-           self.squares[61] = BlackRook;
-           self.squares[63] = Null;
-           self.update_nnue(wk_rdx, bk_rdx, BlackRook, 61, true);
-           self.update_nnue(wk_rdx, bk_rdx, BlackRook, 63, false);
-           key_diff ^= PIECE_BASIS[(BlackRook as usize)*64 + 61]
-                     ^ PIECE_BASIS[(BlackRook as usize)*64 + 63];
+          self.boards[BlackRook] ^= BLACK_SHORT_CASTLE_ROOK;
+          self.sides[Black]      ^= BLACK_SHORT_CASTLE_ROOK;
+          self.squares[61] = BlackRook;
+          self.squares[63] = Null;
+          if valid_s1 {
+            self.update_s1(wk_rdx, bk_rdx, BlackRook, 61, true);
+            self.update_s1(wk_rdx, bk_rdx, BlackRook, 63, false);
+          }
+          key_diff ^= PIECE_BASIS[(BlackRook as usize)*64 + 61]
+                    ^ PIECE_BASIS[(BlackRook as usize)*64 + 63];
         }
         _ => unreachable!()
       }
@@ -202,7 +222,9 @@ impl State {
           self.boards[BlackPawn] ^= ep_location;
           self.sides[Black]      ^= ep_location;
           self.squares[m.dst as usize - 8] = Null;
-          self.update_nnue(wk_rdx, bk_rdx, BlackPawn, m.dst as usize - 8, false);
+          if valid_s1 {
+            self.update_s1(wk_rdx, bk_rdx, BlackPawn, m.dst as usize - 8, false);
+          }
           let ep_offset = (BlackPawn as usize)*64 + m.dst as usize - 8;
           key_diff ^= PIECE_BASIS[ep_offset];
         }
@@ -211,7 +233,9 @@ impl State {
           self.boards[WhitePawn] ^= ep_location;
           self.sides[White]      ^= ep_location;
           self.squares[m.dst as usize + 8] = Null;
-          self.update_nnue(wk_rdx, bk_rdx, WhitePawn, m.dst as usize + 8, false);
+          if valid_s1 {
+            self.update_s1(wk_rdx, bk_rdx, WhitePawn, m.dst as usize + 8, false);
+          }
           let ep_offset = (WhitePawn as usize)*64 + m.dst as usize + 8;
           key_diff ^= PIECE_BASIS[ep_offset];
         }
@@ -222,13 +246,15 @@ impl State {
       self.boards[m.captured] ^= dst_location;
       self.sides[m.captured.color()] ^= dst_location;
 
-      self.update_nnue(wk_rdx, bk_rdx, m.captured, m.dst as usize, false);
+      if valid_s1 {
+        self.update_s1(wk_rdx, bk_rdx, m.captured, m.dst as usize, false);
+      }
 
       let capture_offset = (m.captured as usize)*64 + m.dst as usize;
       key_diff ^= PIECE_BASIS[capture_offset];
     }
 
-    if m.piece.kind() == King {
+    if valid_s1 && m.piece.kind() == King {
       // ↓↓↓ DEBUG ↓↓↓
       // unsafe { KING_MOVES += 1; }
       // ↑↑↑ DEBUG ↑↑↑
@@ -287,6 +313,67 @@ impl State {
     // Step 6. Perform key update
     let re_diff = rezobrist(prev_rights, prev_enpass, self.rights, self.enpass);
     self.key ^= key_diff ^ re_diff ^ TURN_BASIS;
+
+    // ↓↓↓ DEBUGGING ↓↓↓
+    /*
+    if !valid_s1 { return; }
+
+    use crate::color::WB;
+    use crate::nnue::{NETWORK, SameSide, OppoSide};
+
+    let wk_idx =         self.boards[WhiteKing].trailing_zeros() as usize ;
+    let bk_idx = vmirror(self.boards[BlackKing].trailing_zeros() as usize);
+    let w_region = unsafe { &NETWORK.rn[king_region(wk_idx)] };
+    let b_region = unsafe { &NETWORK.rn[king_region(bk_idx)] };
+
+    let mut s1 = [w_region.b1, b_region.b1];
+
+    for kind in KQRBNP {
+      let mut sources = self.boards[White+kind];
+      while sources != 0 {
+        let src = sources.trailing_zeros() as usize;
+        let x = (kind as usize)*64 + src;
+        for n in 0..N1 { s1[White][n] += w_region.w1[SameSide][x][n]; }
+        for n in 0..N1 { s1[Black][n] += b_region.w1[OppoSide][x][n]; }
+        sources &= sources - 1;
+      }
+    }
+    for kind in KQRBNP {
+      let mut sources = self.boards[Black+kind];
+      while sources != 0 {
+        let src = sources.trailing_zeros() as usize;
+        let x = (kind as usize)*64 + vmirror(src);
+        for n in 0..N1 { s1[White][n] += w_region.w1[OppoSide][x][n]; }
+        for n in 0..N1 { s1[Black][n] += b_region.w1[SameSide][x][n]; }
+        sources &= sources - 1;
+      }
+    }
+
+    let last = self.s1.len() - 1;
+    let q1 = &self.s1[last];
+    for c in WB {
+      for n in 0..N1 {
+        let exact  = s1[c][n];
+        let approx = q1[c][n];
+        // i7p9 to f32
+        let cast = approx as f32 / (1 << 9) as f32;
+        let diff = (cast - exact).abs();
+        if diff > 0.015625 {
+          eprintln!("     {c} {n} {exact} {approx} {cast}");
+        }
+        if exact.abs() > 0.25 && (diff / exact.abs()) > (1.0 / 16.0) {
+          eprintln!("1/16 {c} {n} {exact} {approx} {cast}");
+        }
+        if exact.abs() > 0.50 && (diff / exact.abs()) > (1.0 / 32.0) {
+          eprintln!("1/32 {c} {n} {exact} {approx} {cast}");
+        }
+        if exact.abs() > 1.00 && (diff / exact.abs()) > (1.0 / 64.0) {
+          eprintln!("1/64 {c} {n} {exact} {approx} {cast}");
+        }
+      }
+    }
+    */
+    // ↑↑↑ DEBUGGING ↑↑↑
   }
 
   pub fn undo(&mut self, m : &Move)

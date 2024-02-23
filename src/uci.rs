@@ -40,6 +40,8 @@ macro_rules! ttyeprintln {
   }
 }
 
+// TODO use let-else! for example,
+//   let Some(path) = inp.next() else { crate::nnue::print_stats(); continue };
 // TODO consistently use unwrap_or_continue and unwrap_or_break macros
 // macro_rules! unwrap_or_continue {
 //   ($opt:expr) => { match $opt { Some(x) => x, None => continue } }
@@ -597,6 +599,18 @@ pub fn uci() -> std::io::Result<()>
           }
           _ => {}
         }
+      }
+
+      "stat" => {
+        let Some(path) = inp.next() else { crate::nnue::print_stats(); continue };
+        let mut context = Context::new();
+        use crate::import::QuickReader;
+        for qk in QuickReader::open(path)? {
+          let mut state = State::from(&qk?);
+          state.initialize_nnue();
+          crate::datagen::approx_time_search(&mut state, &mut context, 0, 0.2);
+        }
+        crate::nnue::print_stats();
       }
 
       /*

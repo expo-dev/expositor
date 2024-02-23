@@ -140,6 +140,83 @@ pub static mut NETWORK : Network = unsafe { std::mem::transmute(*DEFAULT_NETWORK
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
+pub static mut S1_MAX : Simd32 = SIMD_ZERO;
+pub static mut S1_MIN : Simd32 = SIMD_ZERO;
+pub static mut S2_INP_MAX   : f32 = 0.0;
+pub static mut S2_INP_MIN   : f32 = 0.0;
+pub static mut S2_WORST_MAX : f32 = 0.0;
+pub static mut S2_WORST_MIN : f32 = 0.0;
+pub static mut S2_MAX       : f32 = 0.0;
+pub static mut S2_MIN       : f32 = 0.0;
+
+pub fn print_stats()
+{
+  use std::simd::num::SimdFloat;
+  unsafe {
+    let mut w1_max = 0.0;
+    let mut w1_min = 0.0;
+    for r in 0..REGIONS {
+      let body = &NETWORK.rn[r];
+      for c in WB {
+        for x in 0..Np {
+          for n in 0..N1 {
+            let w = body.w1[c][x][n];
+            if w > w1_max { w1_max = w; }
+            if w < w1_min { w1_min = w; }
+          }
+        }
+      }
+    }
+    let mut w2_max = 0.0;
+    let mut w2_min = 0.0;
+    for h in 0..HEADS {
+      let head = &NETWORK.hd[h];
+      for n in 0..N2 {
+        for c in WB {
+          for x in 0..N1 {
+            let w = head.w2[n][c][x];
+            if w > w2_max { w2_max = w; }
+            if w < w2_min { w2_min = w; }
+          }
+        }
+      }
+    }
+    let mut w3_max = 0.0;
+    let mut w3_min = 0.0;
+    for h in 0..HEADS {
+      let head = &NETWORK.hd[h];
+      for n in 0..N2 {
+        let w = head.w3[n];
+        if w > w3_max { w3_max = w; }
+        if w < w3_min { w3_min = w; }
+      }
+    }
+
+    let upper = S1_MAX.reduce_max();
+    let lower = S1_MIN.reduce_min();
+    eprintln!("w1 maximum: {w1_max:+11.6}");
+    eprintln!("w1 minimum: {w1_min:+11.6}");
+    eprintln!();
+    eprintln!("s1 maximum: {:+11.6}", upper);
+    eprintln!("s1 minimum: {:+11.6}", lower);
+    eprintln!();
+    eprintln!("w2 maximum: {w2_max:+11.6}");
+    eprintln!("w2 minimum: {w2_min:+11.6}");
+    eprintln!();
+    eprintln!("s2 inp max: {:+11.6}", S2_INP_MAX  );
+    eprintln!("s2 inp min: {:+11.6}", S2_INP_MIN  );
+    eprintln!("s2 peak mx: {:+11.6}", S2_WORST_MAX);
+    eprintln!("s2 peak mn: {:+11.6}", S2_WORST_MIN);
+    eprintln!("s2 maximum: {:+11.6}", S2_MAX      );
+    eprintln!("s2 minimum: {:+11.6}", S2_MIN      );
+    eprintln!();
+    eprintln!("w3 maximum: {w3_max:+11.6}");
+    eprintln!("w3 minimum: {w3_min:+11.6}");
+  }
+}
+
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
 impl Network {
   pub const fn zero() -> Self
   {
@@ -360,7 +437,7 @@ impl State {
     else if HEADS == 2 { return (men - 1) / 16; }
     else               { return 0;              }
   }
-
+/*
   pub fn initialize_nnue(&mut self)
   {
     let wk_idx =         self.boards[WhiteKing].trailing_zeros() as usize ;
@@ -434,6 +511,35 @@ impl State {
         }
         let s = (s_a + s_b) + (s_c + s_d);
         s2[n].write(head.b2[n] + horizontal_sum(s));
+
+        {
+          let mut pos = 0.0;
+          let mut neg = 0.0;
+          let sm = std::mem::transmute::<_, &[f32; N1]>(&a1[ c]);
+          for x in 0..N1 {
+            let i = sm[x] * head.w2[n][SideToMove][x];
+            if i > S2_INP_MAX { S2_INP_MAX = i; }
+            if i < S2_INP_MIN { S2_INP_MIN = i; }
+            if i > 0.0 { pos += i; }
+            if i < 0.0 { neg += i; }
+          }
+          let sw = std::mem::transmute::<_, &[f32; N1]>(&a1[!c]);
+          for x in 0..N1 {
+            let i = sw[x] * head.w2[n][SideWaiting][x];
+            if i > S2_INP_MAX { S2_INP_MAX = i; }
+            if i < S2_INP_MIN { S2_INP_MIN = i; }
+            if i > 0.0 { pos += i; }
+            if i < 0.0 { neg += i; }
+          }
+          let b = head.b2[n];
+          if b > 0.0 { pos += b; }
+          if b < 0.0 { neg += b; }
+          if pos > S2_WORST_MAX { S2_WORST_MAX = pos; }
+          if neg < S2_WORST_MIN { S2_WORST_MIN = neg; }
+          let s = pos + neg;
+          if s > S2_MAX { S2_MAX = s; }
+          if s < S2_MIN { S2_MIN = s; }
+        }
       }
       let s2 = std::mem::transmute::<_,&mut [f32; N2]>(&mut s2);
 
@@ -443,6 +549,7 @@ impl State {
       return s3;
     }
   }
+*/
 }
 
 impl Network {

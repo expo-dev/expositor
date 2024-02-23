@@ -561,3 +561,13 @@ fn search_score(
   set_abort(true);
   return (score, best);
 }
+
+pub fn approx_time_search(
+  state   : &mut State,
+  context : &mut Context,
+  guess   : i16,
+  target  : f64,
+) -> (i16, Move)
+{
+  return search_score(state, context, guess, target);
+}

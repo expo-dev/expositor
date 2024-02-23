@@ -2,7 +2,7 @@ use crate::basis::START_KEY;
 use crate::color::Color::{self, *};
 use crate::color::WB;
 use crate::misc::{WHITE_HOME, BLACK_HOME};
-use crate::nnue::{Simd32, vN1};
+use crate::nnue::N1;
 use crate::piece::Kind::{self, *};
 use crate::piece::Piece::{self, *};
 use crate::piece::{KQRBNP, PNBRQK};
@@ -121,7 +121,7 @@ pub struct State {
   pub ply     : u16,    // zero-indexed
   pub key     : u64,    // zobrist key
 
-  pub s1 : Vec<[[Simd32; vN1]; 2]>
+  pub s1 : Vec<[[i16; N1]; 2]>
 }
 
 pub struct SavedMetadata {
@@ -219,8 +219,8 @@ impl State {
   {
     let old_len = self.s1.len();
     if old_len < 2 { return; }
-    let old_end : *const [[Simd32; vN1]; 2] = &self.s1[old_len-1];
-    let new_end :   *mut [[Simd32; vN1]; 2] = &mut self.s1[0];
+    let old_end : *const [[i16; N1]; 2] = &self.s1[old_len-1];
+    let new_end :   *mut [[i16; N1]; 2] = &mut self.s1[0];
     unsafe { std::ptr::copy_nonoverlapping(old_end, new_end, 1); }
     self.s1.truncate(1);
   }

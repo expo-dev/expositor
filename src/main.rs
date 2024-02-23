@@ -3,7 +3,7 @@
 // #![feature(const_maybe_uninit_zeroed)]
 #![feature(bigint_helper_methods)]
 #![feature(iter_intersperse)]
-// #![feature(maybe_uninit_array_assume_init)]
+#![feature(maybe_uninit_array_assume_init)]
 #![feature(maybe_uninit_uninit_array)]
 // #![feature(panic_backtrace_config)]
 #![feature(portable_simd)]
@@ -40,6 +40,7 @@ mod piece     ;
 mod policy    ;
 mod proof     ;
 mod quick     ;
+mod quant     ;
 mod rand      ;
 mod resolve   ;
 mod score     ;
@@ -96,5 +97,8 @@ fn main() -> std::io::Result<()>
   util::set_stacksize(134_217_728);
   dest::generate_tables();
   tablebase::build_3man();
+  unsafe {
+    quant::QUANTIZED = quant::QuantizedNetwork::from(&* std::ptr::addr_of!(nnue::NETWORK));
+  }
   return uci::uci();
 }
