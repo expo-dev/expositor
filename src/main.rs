@@ -85,11 +85,11 @@ fn main() -> std::io::Result<()>
   if util::isatty(util::STDERR) {
     #[cfg(debug_assertions)]
     eprintln!(
-      "Expositor {} \x1B[91mdebug\x1B[39m \x1B[2mbuilt at {}\x1B[22m",
+      "Expositor {} \x1B[91mdebug\x1B[39m \x1B[2m{}\x1B[22m",
       util::VERSION, util::BUILD
     );
     #[cfg(not(debug_assertions))]
-    eprintln!("Expositor {} \x1B[2mbuilt at {}\x1B[22m",
+    eprintln!("Expositor {} \x1B[2m{}\x1B[22m",
       util::VERSION, util::BUILD
     );
   }

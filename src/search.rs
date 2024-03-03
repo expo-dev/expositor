@@ -17,7 +17,7 @@ use crate::state::State;
 use crate::syzygy::{syzygy_support, probe_syzygy_wdl};
 use crate::tablebase::probe_3man;
 use crate::util::{STDOUT, STDERR, isatty};
-use crate::util::{AFFINITY, Affinity, assign_core, set_affinity};
+use crate::util::{AFFINITY, Affinity, assign_proc, set_affinity};
 
 use std::time::{Instant, Duration};
 
@@ -555,12 +555,12 @@ pub fn main_search(
 
 fn support(
   thread_id : usize,
-  core      : isize,
+  proc      : isize,
   mut state : State,
   history   : Vec<(u64, bool)>,
 )
 {
-  if !(core < 0) { set_affinity(core as usize); }
+  if !(proc < 0) { set_affinity(proc as usize); }
 
   let context = unsafe { &mut GLOB.context[thread_id] };
   context.reset();
@@ -599,7 +599,7 @@ fn support(
 
 fn best_move(
   supervisor : std::thread::Thread,
-  core       : isize,
+  proc       : isize,
   mut state  : State,
   history    : Vec<(u64, bool)>,
   limits     : Limits,
@@ -610,7 +610,7 @@ fn best_move(
   // unsafe { crate::apply::RESET_COUNT = 0; }
   // ↑↑↑ DEBUG ↑↑↑
 
-  if !(core < 0) { set_affinity(core as usize); }
+  if !(proc < 0) { set_affinity(proc as usize); }
 
   // Setup
 
@@ -859,25 +859,25 @@ fn supervise(
   let mut handles = Vec::new();
   {
     let supervisor = std::thread::current();
-    let core = assign_core(&affinity, 0);
+    let proc = assign_proc(&affinity, 0);
     let state = state.clone();
     let history = history.clone();
     handles.push(
       std::thread::Builder::new()
         .name(String::from("search.0"))
-        .spawn(move || { best_move(supervisor, core, state, history, limits); })
+        .spawn(move || { best_move(supervisor, proc, state, history, limits); })
         .unwrap()
     );
   }
   if num_threads > 1 {
     for id in 1..num_threads {
-      let core = assign_core(&affinity, id);
+      let proc = assign_proc(&affinity, id);
       let state = state.clone();
       let history = history.clone();
       handles.push(
         std::thread::Builder::new()
           .name(format!("search.{}", id))
-          .spawn(move || { support(id, core, state, history); })
+          .spawn(move || { support(id, proc, state, history); })
           .unwrap()
       );
     }
@@ -910,10 +910,11 @@ pub fn start_search(
   history     : &Vec<(u64, bool)>,
   limits      : Limits,
   num_threads : usize,
+  pin_threads : bool,
 ) -> std::thread::JoinHandle<()>
 {
   let num_threads = std::cmp::max(num_threads, 1);
-  let affinity = unsafe { AFFINITY };
+  let affinity = if pin_threads { unsafe { AFFINITY } } else { Affinity::Scheduler };
   increment_generation();
   set_searching(true);
   let state = state.clone();

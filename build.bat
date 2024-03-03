@@ -1,4 +1,4 @@
-set VERSION=2BR17+win
-set BUILD=%time% on %date%
-set RUSTFLAGS=-C target-cpu=native -C link-args=/STACK:16777216
+set VERSION=4WR02+win
+set BUILD=built at %time% on %date%
+set RUSTFLAGS=-C target-cpu=native -C link-args=/STACK:33554432
 cargo build --release

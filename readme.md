@@ -34,74 +34,52 @@ effective at engendering strong feelings of self-criticism. So in case you need
 to hear it from someone: any goal of yours is a valid one (whether that’s
 chasing Elo gains, wanting to learn stuff, or trying out new, weird, wonderful
 ideas), and the performance or progress of your engine does not reflect your
-self-worth in any way (nor is any certain indicator of how the future will be).
+self-worth in any way (nor is any certain indicator of what the future will be).
 
 ## Status
 
-_Updated January 2024_
+_Updated March 2024_
 
-It’s been over a year since the last release, but Expositor hasn’t been
-abandoned. Since the last release, three major projects have been completed:
-
-- Her value network has been improved by contextually switching out the first
-layer (depending on the locations of the kings) and second layer (depending on
-the material on the board).
-
-- Many of her core types have been rewritten and the correctness of her code
-has been improved.[^1]
-
-- She now has a self-play routine, obviating the need for any external tools or
-opening books to generate training data.
-
-Other changes include
-
-- a bespoke format for training data (the “quick” format) that is
-smaller and faster to deserialize,
-
-- support for transposition table sizes besides powers of two, and
-
-- support for setting processor affinity for search threads.
-
-I also relented and decided to include Syzygy support through the use of the
-Fathom library, since it’s a valuable feature and I won’t get around to writing
-my own implementation as soon as I had hoped.
-
-The current version of Expositor is not much stronger than 2BR17 at standard
-chess, but ought to be significantly stronger at
-[chess 324](https://talkchess.com/forum3/viewtopic.php?f=2&t=80482).
-
-There are four features in progress:
+There are three features in progress:
 
 - an alternative evaluator (along the lines of an HCE) from which her NNUE will
-be re-bootstrapped,[^2]
+be re-bootstrapped,[^1]
 
-- the quantization of her NNUE,
+- a proof number search,[^2] and
 
-- a proof number search, and
+- a compact policy network.
 
-- a policy network.
+For projects that haven’t been started yet, see the **Planned** section of this
+readme.
 
-[^1]: Expositor will always have undefined behavior, since some things that can
-be useful for performance are simply impossible to do in Rust, such as reading
-uninitialized memory or accessing memory from multiple threads without atomicity.
-
-[^2]: There are particular goals and constraints that I have for the alternative
-evaluator and, since I expect that I won’t ever touch the evaluator again after
-I’ve finished it, I want to get it right. I’ve started over multiple times and
+[^1]: There are particular goals and constraints that I have for the alternative
+evaluator and – since I expect that I won’t ever touch the evaluator again after
+I’ve finished it – I want to get it right. I’ve started over multiple times and
 thrown away most of what I’ve written, and I’ve lost count of the number of
-versions there have been, but I do feel I’ve been making progress. It’s unclear
-whether it will ultimately resemble traditional HCEs in any meaningful way
-(which is why I’m simply calling it “an alternative evaluator”). Once the
-alternative evaluator is complete, it will take several additional months
-to train two or three iterations of the NNUE.
+versions there have been, but I do hope it will eventually be finished. It’s
+unclear whether it will ultimately resemble traditional HCEs, which is why I’m
+simply calling it “an alternative evaluator”. Once the alternative evaluator
+is complete, it will take several additional months to train two or three
+iterations of the NNUE.
 
-_Will Expositor ever support FRC or DRFC?_&ensp;I’m very interested in chess
-324, but I don’t really like FRC, so no – I don’t expect Expositor will ever
-support FRC or DRFC.
+[^2]: You can try this for yourself by entering, for example,
+`n2Bqk2/5p1p/Q4KP1/p7/8/8/8/8 w - - 0 1` and then typing `proof`.
+After a moment, she will print something like
+`Searching... Proven. #+16 Qc8 Qe6+ Qxe6 fxe6 gxh7 Ke8 Kxe6 ...`.
+You can ask her to search for a mate in 13 by typing `proof 13`,
+and she will reply
+`Searching... Proven. #+13 Qc8 Kg8 Bc7 Qxc8 gxf7+ Kh8 Be5 ...`.
+This happens to be optimal for this position, so if you type `proof 12`,
+she will exhaust the allocated memory arena before finding a solution
+(because none exists): `Searching... Out of memory.`
+
+_Will Expositor ever support FRC or DRFC?_&ensp;I’m very interested in
+[chess 324](https://talkchess.com/forum3/viewtopic.php?f=2&t=80482), but I don’t
+really like FRC, so no – I don’t expect Expositor will ever support FRC or DRFC.
 
 _Why do people always assume you’re male?_&ensp;I’m not sure, but I suppose it’s
-a reasonable guess given the demographics of chess and programming. Please feel
-free to refer to me however you’d like (_he, she,_ or _they_).
+a reasonable guess given the current demographics of chess and programming.
+Please feel free to refer to me however you’d like (_he, she,_ or _they_).
 
 As always, stay safe, and thank you for your interest in Expositor!
 
@@ -137,169 +115,6 @@ current position:
 
 For more information, see the **Usage** section of this readme, pass any command
 line argument to Expositor, or use the `help` command when Expositor is running.
-
-### Move Generation
-
-The core of move generation is variable-shift perfect hashing. (There are
-several alternatives using pext in the source, but they are currently
-commented out, since they didn’t cause significant performance improvement.)
-
-Expositor generates only legal moves by calculating pins and dangerous squares
-for the king. She also calculates “vantage” and “waylay” squares (the terms used
-in the source) in order to annotate each generated move as giving a direct or
-discovered check or both. This information is used in the quiescing search (and
-in the future may also be used in move scoring).
-
-When a move is applied, she sets the flag indicating whether the side to move is
-in check based on the move annotation, and so a second check calculation isn’t
-performed redundantly.
-
-Move scoring is staged, so she won’t bother scoring quiet moves if she doesn’t
-have to. Moves are sorted using a selection sort, so she won’t sort more moves
-than she has to.
-
-Legal-only move generation and direct-&thinsp;/&thinsp;discovered-check
-annotations are some of the more unusual features of Expositor.
-
-### Main Search
-
-Expositor has a fairly standard principal variation search (a variation of
-α-β search) with aspiration windows. When there is more than one search thread,
-jitter is introduced by varying the aspiration window per thread.
-
-**Extensions and Reductions**&ensp;internal iterative reduction,
-null-move reduction, check extension, singular-move extension, late-move
-reduction (quiet moves only), history reduction (quiet moves only)
-
-**Pruning Rules and Heuristics**&ensp;mate-distance pruning, reverse futility
-pruning, null-move pruning, multicut, futility pruning
-
-**Move Ordering**&ensp;transposition table hints, killer move heuristic,
-static exchange analysis (captures only), history heuristic (quiet moves only)
-
-### History Table
-
-History tables are indexed by color, piece, and destination square. Each entry
-is a pair of scores ⟨_a, b_⟩ where the deep score _a_ correlates with cutoffs
-near the root of the search tree and the shallow score _b_ correlates with
-cutoffs near the extremities. <!--In simplified form,
-$${\rm lookup}(\langle a, b\rangle, h) = (a\times(32-h) + b\times h) / 32$$
-$${\rm update}(\langle a, b\rangle, h) = \langle a\pm(32-h), b\pm h\rangle$$
-where $h$ is the height (the distance from the root of the search tree) clipped
-to the range $0$ to $32$.-->
-
-I’m planning to replace the current scheme with an idea I had inspired by the
-GEHL and TAGE branch predictors.[^3]
-
-[^3]: See [this paper](https://jilp.org/cbp/Andre.pdf) and
-[this paper](https://jilp.org/vol8/v8paper1.pdf).
-
-I’ve tried introducing countermove, follow-up, and capture history tables, but
-they had little effect on playing strength at the time. I’m planning to try them
-again some time.
-
-### Quiescing Search
-
-Note that, in the source, this is currently called the “resolving” search,
-since its purpose is to resolve tactical sequences. The “length” of a node in
-a quiescing search tree is the distance from the root of that quiescing search
-(increasing by 1 per ply).[^4][^5]
-
-[^4]: The “height“ of a node in the main search tree or in a quiescing search
-tree is the distance from the root of the _main_ search. So if the root of a
-quiescing search (with length 0, by definition) has height 17, then a node
-within that quiescing search tree with length 2 would have height 17 + 2 = 19.
-Like length, height always increases by 1 per ply.
-
-[^5]: The “depth” of a node is a fairly arbitrary number that usually
-decreases by 1 per ply along the principal variation (and by a greater amount
-along other lines). Depth is only defined for nodes in the main search tree
-(just as length is only defined for nodes in a quiescing search tree).
-A node in the main search tree with depth 0 is the root of a quiescing search
-tree, and so also has length 0 – these are the only nodes that are part of both
-the main search tree and a quiescing search tree.
-
-The quiescing search varies in selectivity in a way that is fairly
-straightforward in principal but rather tedious to describe; click on the
-section below for details.
-
-<details>
-<summary><i>Click to expand</i></summary>
-
-The move generator itself has three levels of selectivity:
-- Everything (quiet moves, checks, captures, and promotions),
-- Active (checks, captures, and promotions), and
-- Gainful (captures and promotions).
-
-The _gained_ array is a list of boolean values that describes the moves of the
-current variation, where <i>gained</i>[<i>length</i>] is true when the side to
-move at the node with length _length_ is in check or when the move made by the
-side to move was a capture or promotion.
-
-The selectivity of the move generator at a node is
-- if the side to move is in check, then Everything;
-- otherwise, if _length_ &ge; _B_, then Gainful;
-- otherwise, if _length_ &ge; _A_, then
-    - if <i>gained</i>[<i>length</i>−2] then Active else Gainful;
-- otherwise Active;
-
-where _A_ and _B_ are small constants and _A_ &lt; _B_.
-</details>
-
-Summarily, the quiescing search will consider noncapture checks unless
-a node is far from the root of the quiescing search or the side to move gave
-a check on its previous turn that also wasn’t a capture. (This prevents long
-sequences of fruitless checks.)
-
-Additionally, when the side to move is not itself in check, some candidate
-moves may be skipped:
-- Losing captures are ignored and, once _length_ &ge; _C_ (where _C_ is some
-small constant), neutral captures are ignored as well unless they give check.
-- Captures are subject to delta pruning unless they give check.
-- Noncapture moves that put a piece en prise are ignored.
-
-However, promotions and moves that give discovered check are always considered
-(even if static exchange analysis predicts they are bad).
-
-The fact that all moves are considered when the side to move is in check means
-that the quiescing search can return mate scores.
-
-### Transposition Table
-
-Each entry stores the generation number of the search when it was written.
-(The generation number is incremented at the beginning of the top-level
-search routine.) The current policy is to unconditionally replace entries
-from previous generations. Transposition table access is lockless.
-
-The `Persist` option can be used to have Expositor disregard entries with
-old generation numbers during lookup, which will cause single-threaded
-searches to be deterministic. (This is equivalent to clearing the
-transposition table before each search, but without the overhead.)
-
-The ability to disable persistence is perhaps one of the more unusual
-features of Expositor.
-
-### Time Control
-
-The earliest versions of Expositor used a [model based on the log-normal
-distribution of the length of chess games](https://expositor.dev/pdf/movetime.pdf)
-which depended only on the number of moves played so far.
-I then wrote a rather complicated
-[empirical model](https://github.com/jtheardw/mantissa/blob/master/src/time.rs)
-that is used in Mantissa, which depends on the number of moves played so far
-and the material difference between the two sides.
-
-Expositor now uses a simple linear model that depends on the number of moves
-played so far and the number of men left on the board, fit to a selection of
-TCEC games. Differentiating between pieces and pawns, or including the material
-difference between the two sides, did not meaningfully improve the regression.
-
-### Internal Tablebases
-
-On startup, Expositor generates internal 3-man tablebases with WDL and DTM
-information. This takes approximately a quarter of a second.
-
-This is one of the more unusual features of Expositor.
 
 ### Network Architecture
 
@@ -387,12 +202,174 @@ the outgoing weights connecting to the square nodes are the same color.
 I haven’t tried this; for all I know, it works better!
 </details>
 
+### Move Generation
+
+The core of move generation is variable-shift perfect hashing. (There are
+several alternatives using pext in the source, but they are currently
+commented out, since they didn’t cause significant performance improvement.)
+
+Expositor generates only legal moves by calculating pins and dangerous squares
+for the king. She also calculates “vantage” and “waylay” squares (the terms used
+in the source) in order to annotate each generated move as giving a direct or
+discovered check or both. This information is used in the quiescing search (and
+in the future may also be used in move scoring).
+
+When a move is applied, she sets the flag indicating whether the side to move is
+in check based on the move annotation, and so a second check calculation isn’t
+performed redundantly.
+
+Move scoring is staged, so she won’t bother scoring quiet moves if she doesn’t
+have to. Moves are sorted using a selection sort, so she won’t sort more moves
+than she has to.
+
+Legal-only move generation and direct-&thinsp;/&thinsp;discovered-check
+annotations are some of the more unusual features of Expositor.
+
+### Quiescing Search
+
+Note that, in the source, this is currently called the “resolving” search,
+since its purpose is to resolve tactical sequences. The “length” of a node in
+a quiescing search tree is the distance from the root of that quiescing search
+(increasing by 1 per ply).[^3][^4]
+
+[^3]: The “height“ of a node in the main search tree or in a quiescing search
+tree is the distance from the root of the _main_ search. So if the root of a
+quiescing search (with length 0, by definition) has height 17, then a node
+within that quiescing search tree with length 2 would have height 17 + 2 = 19.
+Like length, height always increases by 1 per ply.
+
+[^4]: The “depth” of a node is a fairly arbitrary number that usually
+decreases by 1 per ply along the principal variation (and by a greater amount
+along other lines). Depth is only defined for nodes in the main search tree
+(just as length is only defined for nodes in a quiescing search tree).
+A node in the main search tree with depth 0 is the root of a quiescing search
+tree, and so also has length 0 – these are the only nodes that are part of both
+the main search tree and a quiescing search tree.
+
+The quiescing search varies in selectivity in a way that is fairly
+straightforward in principal but rather tedious to describe; click on the
+section below for details.
+
+<details>
+<summary><i>Click to expand</i></summary>
+
+The move generator itself has three levels of selectivity:
+- Everything (quiet moves, checks, captures, and promotions),
+- Active (checks, captures, and promotions), and
+- Gainful (captures and promotions).
+
+The _gained_ array is a list of boolean values that describes the moves of the
+current variation, where <i>gained</i>[<i>length</i>] is true when the side to
+move at the node with length _length_ is in check or when the move made by the
+side to move was a capture or promotion.
+
+The selectivity of the move generator at a node is
+- if the side to move is in check, then Everything;
+- otherwise, if _length_ &ge; _B_, then Gainful;
+- otherwise, if _length_ &ge; _A_, then
+    - if <i>gained</i>[<i>length</i>−2] then Active else Gainful;
+- otherwise Active;
+
+where _A_ and _B_ are small constants and _A_ &lt; _B_.
+</details>
+
+Summarily, the quiescing search will consider noncapture checks unless
+a node is far from the root of the quiescing search or the side to move gave
+a check on its previous turn that also wasn’t a capture. (This prevents long
+sequences of fruitless checks.)
+
+Additionally, when the side to move is not itself in check, some candidate
+moves may be skipped:
+- Losing captures are ignored and, once _length_ &ge; _C_ (where _C_ is some
+small constant), neutral captures are ignored as well unless they give check.
+- Captures are subject to delta pruning unless they give check.
+- Noncapture moves that put a piece en prise are ignored.
+
+However, promotions and moves that give discovered check are always considered
+(even if static exchange analysis predicts they are bad).
+
+The fact that all moves are considered when the side to move is in check means
+that the quiescing search can return mate scores.
+
+### Main Search
+
+Expositor has a fairly standard principal variation search (a variation of
+α-β search) with aspiration windows. When there is more than one search thread,
+jitter is introduced by varying the aspiration window per thread.
+
+**Extensions and Reductions**&ensp;internal iterative reduction,
+null-move reduction, check extension, singular-move extension, late-move
+reduction (quiet moves only), history reduction (quiet moves only)
+
+**Pruning Rules and Heuristics**&ensp;mate-distance pruning, reverse futility
+pruning, null-move pruning, multicut, futility pruning
+
+**Move Ordering**&ensp;transposition table hints, killer move heuristic,
+static exchange analysis (captures only), history heuristic (quiet moves only)
+
+### History Table
+
+History tables are indexed by color, piece, and destination square. Each entry
+is a pair of scores ⟨_a, b_⟩ where the deep score _a_ correlates with cutoffs
+near the root of the search tree and the shallow score _b_ correlates with
+cutoffs near the extremities. <!--In simplified form,
+$${\rm lookup}(\langle a, b\rangle, h) = (a\times(32-h) + b\times h) / 32$$
+$${\rm update}(\langle a, b\rangle, h) = \langle a\pm(32-h), b\pm h\rangle$$
+where $h$ is the height (the distance from the root of the search tree) clipped
+to the range $0$ to $32$.-->
+
+I’m planning to replace the current scheme with an idea I had inspired by the
+GEHL and TAGE branch predictors.[^5]
+
+[^5]: See [this paper](https://jilp.org/cbp/Andre.pdf) and
+[this paper](https://jilp.org/vol8/v8paper1.pdf).
+
+I’ve tried introducing countermove, follow-up, and capture history tables, but
+they had little effect on playing strength at the time. I’m planning to try them
+again some time.
+
+### Transposition Table
+
+Each entry stores the generation number of the search when it was written.
+(The generation number is incremented at the beginning of the top-level
+search routine.) The current policy is to unconditionally replace entries
+from previous generations. Transposition table access is lockless.
+
+The `Persist` option can be used to have Expositor disregard entries with
+old generation numbers during lookup, which will cause single-threaded
+searches to be deterministic. (This is equivalent to clearing the
+transposition table before each search, but without the overhead.)
+
+The ability to disable persistence is perhaps one of the more unusual
+features of Expositor.
+
+### Time Control
+
+The earliest versions of Expositor used a [model based on the log-normal
+distribution of the length of chess games](https://expositor.dev/pdf/movetime.pdf)
+which depended only on the number of moves played so far.
+I then wrote a rather complicated
+[empirical model](https://github.com/jtheardw/mantissa/blob/master/src/time.rs)
+that is used in Mantissa, which depends on the number of moves played so far
+and the material difference between the two sides.
+
+Expositor now uses a simple linear model that depends on the number of moves
+played so far and the number of men left on the board, fit to a selection of
+TCEC games. Differentiating between pieces and pawns, or including the material
+difference between the two sides, did not meaningfully improve the regression.
+
+### Internal Tablebases
+
+On startup, Expositor generates internal 3-man tablebases with WDL and DTM
+information. This takes approximately a quarter of a second.
+
+This is one of the more unusual features of Expositor.
+
 ### Quick Format
 
 Training data is stored in a fixed-length, 40-byte format rather than in FEN
 or EPD. In the source this is named the “quick” format, since it takes less
-time to read from disk and deserialize. (Incidentally, it also takes less
-space.)
+time to read from disk and deserialize. (It also takes less space.)
 
 <!--```
   fen   rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
@@ -427,25 +404,19 @@ email to uci@expositor.dev.
 
 ## Releases
 
-If you know the microarchitecture of your processor, try using a binary from the
-appropriate `specific` directory of a release archive.[^7][^8] If you don’t know
-the microarchitecture of your processor but you do know which features it
-supports, try using a binary from the appropriate `generic` directory of a
+If you know the generation or microarchitecture of your processor, try using
+a binary from the `amd` or `intel` directory of a release archive.[^7] If you
+don’t know the microarchitecture of your processor but you do know which
+features it supports, try using a binary from the `generic` directory of a
 release archive. See the [file named `extensions.md`](extensions.md) in this
 repository for more information about AMD and Intel microarchitectures and the
 features they support.
 
-The binaries include the default network, so you do not need to download a
-separate copy.
-
-[^7]: I’m not completely confident that I matched the proper cpu-target for some
-AMD microarchitectures; please let me know if I’ve made any mistakes.
-
-[^8]: I’ve attempted to include binaries for most consumer desktop hardware but
-not server or mobile platforms. If you have an Epyc, Xeon, or Atom processor,
-for example, and want a targeted binary, you’ll need to compile from source.
-Feel free to reach out to me for help or if you’d like me to include a binary
-for your platform in releases.
+[^7]: I’ve attempted to include binaries for most consumer laptop and desktop
+hardware but not mobile or server platforms. If you have an Atom, Xeon, or Epyc
+processor, for example, and want a targeted binary, you’ll need to compile from
+source. Feel free to reach out to me for help or if you’d like me to include a
+binary for your platform in releases.
 
 ## Building
 
@@ -466,14 +437,13 @@ There are no command line options, but the engine can be configured with these
 UCI options:
 ```
 setoption name Hash value <num>
-  Set the size of the transposition (in MiB) to the largest power of two
-  less than or equal to <num>.
+  Set the size of the transposition (in MiB) to <num>.
 
 setoption name Threads value <num>
   Use <num> search threads. Performance will suffer if this is set larger
-  than the number of logical cores on your machine, and depending on your
-  processor, may suffer if this is set larger than the number of physical
-  cores.
+  than the number of logical processors on your machine, and depending on
+  your processor, may suffer if this is set larger than the number of
+  physical cores.
 
 setoption name Overhead value <num>
   Set the move overhead (used in time control calculations) to <num>
@@ -493,6 +463,24 @@ setoption name Persist value <bool>
   (This is achieved by tagging each table entry with a generation and
   does not incur the penalty of actually zeroing the table.) Setting
   this option to true generally increases playing strength.
+
+setoption name Pin value <bool>
+  Request that search threads set their affinity mask so that they are
+  pinned to different logical processors. The engine will attempt to
+  determine which logical processors share each physical core by querying
+  sysfs and then assign search threads to different physical cores. Once
+  every physical core has a search thread assigned to it, the engine will
+  assign search threads to the remaining logical processors in an attempt
+  to evenly distribute search threads over the physical cores. Once every
+  logical processor has a search thread assigned to it, the engine will
+  stop issuing assignments, leaving any remaining threads with their
+  default affinity masks. If the engine is unable to determine the
+  topology, it will behave as if the Pin option were set to false,
+  and placement will be left to the operating system process scheduler.
+  If multiple instances of the engine are running on the same machine,
+  it is strongly recommended that you set this option to false, otherwise
+  the instances will contend for the same cores despite the availability
+  of other cores. This feature is only implemented for Linux systems.
 
 setoption name SyzygyPath value <path>
   Inform the engine that Syzygy tablebase files are located in the
@@ -545,6 +533,7 @@ send a message to help@expositor.dev.
 
 | Version | Release Date | Notes                                         |
 |:-------:|:------------:|:----------------------------------------------|
+|  4WR02  |   2 Mar 2024 | new value network architecture, quantization  |
 |  2BR17  |  17 Sep 2022 | fixes, tuned search, internal 3-man tablebase |
 |  2WN29  |  29 May 2022 | fixes, better time control, cache persistence |
 |  2WQ23  |  23 Feb 2022 | first public release                          |

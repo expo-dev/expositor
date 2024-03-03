@@ -1,13 +1,8 @@
 use std::simd::Simd;
+use std::simd::num::SimdFloat;
 
 #[cfg(target_feature="avx")]
 use std::arch::x86_64::*;
-
-// #[cfg(not(target_feature="avx"))]
-// use std::simd::{SimdFloat, SimdPartialOrd};
-use std::simd::num::SimdFloat;
-#[cfg(not(target_feature="avx"))]
-use std::simd::cmp::SimdPartialOrd;
 
 // Number of single-precision floating-point numbers per vector
 #[cfg(target_feature="avx")]

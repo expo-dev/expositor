@@ -112,7 +112,7 @@ pub enum Affinity {
   Alternating(usize), // Assign threads alternatingly b/c SMT pairs are (0, 1), (2, 3), ...
 }
 
-pub fn assign_core(affinity : &Affinity, id : usize) -> isize
+pub fn assign_proc(affinity : &Affinity, id : usize) -> isize
 {
   return match affinity {
     Affinity::Scheduler      => -1,
@@ -125,70 +125,71 @@ pub static mut AFFINITY : Affinity = Affinity::Scheduler;
 
 pub fn get_affinity()
 {
-  #[cfg(not(target_os="linux"))] return;
+  #[cfg(arget_os="linux")]
+  {
+    // Step 1. Get the mask of available processors
 
-  // Step 1. Get the mask of available processors
+    let mut mask : [u64; 16] = [0; 16];
+    unsafe {
+      let ret : i64;
+      let getaffinity : u64 = 204;
+      let pid         : u64 = 0;
+      let cpusetsize  : u64 = 128;
 
-  let mut mask : [u64; 16] = [0; 16];
-  unsafe {
-    let ret : i64;
-    let getaffinity : u64 = 204;
-    let pid         : u64 = 0;
-    let cpusetsize  : u64 = 128;
+      std::arch::asm!(
+        "syscall"
+        , inout("rax") getaffinity => ret
+        ,    in("rdi") pid
+        ,    in("rsi") cpusetsize
+        ,    in("rdx") &mut mask
+        ,   out("r10") _
+        ,   out("r8" ) _
+        ,   out("r9" ) _
+        ,   out("rcx") _
+        ,   out("r11") _
+      );
+      // The return value is the number of bytes written into the
+      //   mask buffer, which is the minimum of cpusetsize and the
+      //   size of mask data type used internally by the kernel.
+      if ret < 0 { return; }
+    }
 
-    std::arch::asm!(
-      "syscall"
-      , inout("rax") getaffinity => ret
-      ,    in("rdi") pid
-      ,    in("rsi") cpusetsize
-      ,    in("rdx") &mut mask
-      ,   out("r10") _
-      ,   out("r8" ) _
-      ,   out("r9" ) _
-      ,   out("rcx") _
-      ,   out("r11") _
-    );
-    // The return value is the number of bytes written into the
-    //   mask buffer, which is the minimum of cpusetsize and the
-    //   size of mask data type used internally by the kernel.
-    if ret < 0 { return; }
-  }
+    // Step 2. Count the number of processors
+    //   and ensure they are contiguous from zero
 
-  // Step 2. Count the number of processors
-  //   and ensure they are contiguous from zero
+    let mut carry = true;
+    for x in 0..8 { (mask[x], carry) = mask[x].carrying_add(0, carry); }
 
-  let mut carry = true;
-  for x in 0..8 { (mask[x], carry) = mask[x].carrying_add(0, carry); }
+    let mut popcnt = 0;
+    for x in 0..16 { popcnt += mask[x].count_ones(); }
+    if popcnt != 1 { return; }
 
-  let mut popcnt = 0;
-  for x in 0..16 { popcnt += mask[x].count_ones(); }
-  if popcnt != 1 { return; }
+    let mut num_proc = 0;
+    for x in 0..16 {
+      if mask[x] == 0 { num_proc += 64; }
+      else { num_proc += mask[x].trailing_zeros() as usize; break; }
+    }
+    if num_proc == 0 { return; }
 
-  let mut num_proc = 0;
-  for x in 0..16 {
-    if mask[x] == 0 { num_proc += 64; }
-    else { num_proc += mask[x].trailing_zeros() as usize; break; }
-  }
-  if num_proc == 0 { return; }
+    // Step 3. Special cases
 
-  // Step 3. Special cases
+    if num_proc & 1 != 0 { return; }
 
-  if num_proc & 1 != 0 { return; }
+    if num_proc == 1 { return; }
+    if num_proc == 2 { return; }
 
-  if num_proc == 1 { return; }
-  if num_proc == 2 { return; }
+    // Step 4. Determine the numbering of SMT threads
 
-  // Step 4. Determine the numbering of SMT threads
+    let coremate = cpu0_sibling();
+    if !(coremate > 0) { return; }
+    let coremate = coremate as usize;
 
-  let coremate = cpu0_sibling();
-  if !(coremate > 0) { return; }
-  let coremate = coremate as usize;
-
-  if coremate == num_proc / 2 {
-    unsafe { AFFINITY = Affinity::Contiguous(num_proc); }
-  }
-  else if coremate == 1 {
-    unsafe { AFFINITY = Affinity::Alternating(num_proc); }
+    if coremate == num_proc / 2 {
+      unsafe { AFFINITY = Affinity::Contiguous(num_proc); }
+    }
+    else if coremate == 1 {
+      unsafe { AFFINITY = Affinity::Alternating(num_proc); }
+    }
   }
 }
 

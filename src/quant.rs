@@ -33,11 +33,18 @@ impl<U, T, const N : usize> ArrayMap<U, T, N> for [U; N] {
   }
 }
 
-fn vpmulhrsw(x : Simd<i16, 16>, y : Simd<i16, 16>) -> Simd<i16, 16>
-{
-  return Simd::from(
-    unsafe { _mm256_mulhrs_epi16(__m256i::from(x), __m256i::from(y)) }
-  );
+#[cfg(target_feature="avx2")]
+macro_rules! vpmulhrsw {
+  ($x:expr, $y:expr) => {
+    Simd::from(_mm256_mulhrs_epi16(__m256i::from($x), __m256i::from($y)))
+  }
+}
+
+#[cfg(not(target_feature="avx2"))]
+macro_rules! vpmulhrsw {
+  ($x:expr, $y:expr) => {
+    Simd::from(_mm_mulhrs_epi16(__m128i::from($x), __m128i::from($y)))
+  }
 }
 
 fn f32_to_i7p9(x : f32) -> i16
@@ -215,9 +222,7 @@ impl State {
 
   pub fn evaluate(&self) -> f32
   {
-    type Simd16 = Simd<i16, 16>;
-    const SIMD_ZERO : Simd16 = Simd::from_array([0; 16]);
-
+    type Simd256 = Simd<i16, 16>;
     unsafe {
       // ↓↓↓ DEBUGGING ↓↓↓
       /*
@@ -280,42 +285,75 @@ impl State {
 
       let s1 = &self.s1[self.s1.len()-1];
 
-      let mut a1 : [[MaybeUninit<Simd16>; N1/16]; 2] =
+      let mut a1 : [[MaybeUninit<Simd256>; N1/16]; 2] =
         [MaybeUninit::uninit_array(), MaybeUninit::uninit_array()];
 
       for c in WB {
         for n in 0..N1/16 {
           let ofs = n * 16;
           a1[c][n].write(
-            Simd16::from_slice(&s1[c][ofs .. ofs+16]).simd_max(Simd::splat(0))
+            Simd256::from_slice(&s1[c][ofs .. ofs+16]).simd_max(Simd::splat(0))
           );
         }
       }
-      let a1 = std::mem::transmute::<_,&mut [[Simd16; N1/16]; 2]>(&mut a1);
 
       let mut s2 : [MaybeUninit<i16>; N2] = MaybeUninit::uninit_array();
       let c = self.turn;
-      for n in 0..N2 {
-        let mut s_a = SIMD_ZERO;
-        let mut s_b = SIMD_ZERO;
-        let mut s_c = SIMD_ZERO;
-        let mut s_d = SIMD_ZERO;
-        for x in 0..N1/64 {
-          let ofs = x * 64;
-          s_a += vpmulhrsw(a1[ c][x*4+0], Simd16::from_slice(&head.w2[n][SideToMove ][ofs    .. ofs+16]));
-          s_b += vpmulhrsw(a1[ c][x*4+1], Simd16::from_slice(&head.w2[n][SideToMove ][ofs+16 .. ofs+32]));
-          s_c += vpmulhrsw(a1[ c][x*4+2], Simd16::from_slice(&head.w2[n][SideToMove ][ofs+32 .. ofs+48]));
-          s_d += vpmulhrsw(a1[ c][x*4+3], Simd16::from_slice(&head.w2[n][SideToMove ][ofs+48 .. ofs+64]));
+
+      #[cfg(target_feature="avx2")]
+      {
+        let a1 = std::mem::transmute::<_,&mut [[Simd256; N1/16]; 2]>(&mut a1);
+        const SIMD_ZERO : Simd256 = Simd::from_array([0; 16]);
+        for n in 0..N2 {
+          let mut s_a = SIMD_ZERO;
+          let mut s_b = SIMD_ZERO;
+          let mut s_c = SIMD_ZERO;
+          let mut s_d = SIMD_ZERO;
+          for x in 0..N1/64 {
+            let ofs = x * 64;
+            s_a += vpmulhrsw!(a1[ c][x*4+0], Simd256::from_slice(&head.w2[n][SideToMove ][ofs    .. ofs+16]));
+            s_b += vpmulhrsw!(a1[ c][x*4+1], Simd256::from_slice(&head.w2[n][SideToMove ][ofs+16 .. ofs+32]));
+            s_c += vpmulhrsw!(a1[ c][x*4+2], Simd256::from_slice(&head.w2[n][SideToMove ][ofs+32 .. ofs+48]));
+            s_d += vpmulhrsw!(a1[ c][x*4+3], Simd256::from_slice(&head.w2[n][SideToMove ][ofs+48 .. ofs+64]));
+          }
+          for x in 0..N1/64 {
+            let ofs = x * 64;
+            s_a += vpmulhrsw!(a1[!c][x*4+0], Simd256::from_slice(&head.w2[n][SideWaiting][ofs    .. ofs+16]));
+            s_b += vpmulhrsw!(a1[!c][x*4+1], Simd256::from_slice(&head.w2[n][SideWaiting][ofs+16 .. ofs+32]));
+            s_c += vpmulhrsw!(a1[!c][x*4+2], Simd256::from_slice(&head.w2[n][SideWaiting][ofs+32 .. ofs+48]));
+            s_d += vpmulhrsw!(a1[!c][x*4+3], Simd256::from_slice(&head.w2[n][SideWaiting][ofs+48 .. ofs+64]));
+          }
+          let s = (s_a + s_b) + (s_c + s_d);
+          s2[n].write(head.b2[n] + s.reduce_sum()); // TODO optimize horizontal sum
         }
-        for x in 0..N1/64 {
-          let ofs = x * 64;
-          s_a += vpmulhrsw(a1[!c][x*4+0], Simd16::from_slice(&head.w2[n][SideWaiting][ofs    .. ofs+16]));
-          s_b += vpmulhrsw(a1[!c][x*4+1], Simd16::from_slice(&head.w2[n][SideWaiting][ofs+16 .. ofs+32]));
-          s_c += vpmulhrsw(a1[!c][x*4+2], Simd16::from_slice(&head.w2[n][SideWaiting][ofs+32 .. ofs+48]));
-          s_d += vpmulhrsw(a1[!c][x*4+3], Simd16::from_slice(&head.w2[n][SideWaiting][ofs+48 .. ofs+64]));
+      }
+      #[cfg(not(target_feature="avx2"))]
+      {
+        type Simd128 = Simd<i16, 8>;
+        let a1 = std::mem::transmute::<_,&mut [[Simd128; N1/8]; 2]>(&mut a1);
+        const SIMD_ZERO : Simd128 = Simd::from_array([0; 8]);
+        for n in 0..N2 {
+          let mut s_a = SIMD_ZERO;
+          let mut s_b = SIMD_ZERO;
+          let mut s_c = SIMD_ZERO;
+          let mut s_d = SIMD_ZERO;
+          for x in 0..N1/32 {
+            let ofs = x * 32;
+            s_a += vpmulhrsw!(a1[ c][x*4+0], Simd128::from_slice(&head.w2[n][SideToMove ][ofs    .. ofs+ 8]));
+            s_b += vpmulhrsw!(a1[ c][x*4+1], Simd128::from_slice(&head.w2[n][SideToMove ][ofs+ 8 .. ofs+16]));
+            s_c += vpmulhrsw!(a1[ c][x*4+2], Simd128::from_slice(&head.w2[n][SideToMove ][ofs+16 .. ofs+24]));
+            s_d += vpmulhrsw!(a1[ c][x*4+3], Simd128::from_slice(&head.w2[n][SideToMove ][ofs+24 .. ofs+32]));
+          }
+          for x in 0..N1/32 {
+            let ofs = x * 32;
+            s_a += vpmulhrsw!(a1[!c][x*4+0], Simd128::from_slice(&head.w2[n][SideWaiting][ofs    .. ofs+ 8]));
+            s_b += vpmulhrsw!(a1[!c][x*4+1], Simd128::from_slice(&head.w2[n][SideWaiting][ofs+ 8 .. ofs+16]));
+            s_c += vpmulhrsw!(a1[!c][x*4+2], Simd128::from_slice(&head.w2[n][SideWaiting][ofs+16 .. ofs+24]));
+            s_d += vpmulhrsw!(a1[!c][x*4+3], Simd128::from_slice(&head.w2[n][SideWaiting][ofs+24 .. ofs+32]));
+          }
+          let s = (s_a + s_b) + (s_c + s_d);
+          s2[n].write(head.b2[n] + s.reduce_sum()); // TODO optimize horizontal sum
         }
-        let s = (s_a + s_b) + (s_c + s_d);
-        s2[n].write(head.b2[n] + s.reduce_sum()); // TODO optimize horizontal sum
       }
       let s2 = std::mem::transmute::<_,&mut [i16; N2]>(&mut s2);
 
