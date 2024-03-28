@@ -34,7 +34,8 @@ effective at engendering strong feelings of self-criticism. So in case you need
 to hear it from someone: any goal of yours is a valid one (whether that’s
 chasing Elo gains, wanting to learn stuff, or trying out new, weird, wonderful
 ideas), and the performance or progress of your engine does not reflect your
-self-worth in any way (nor is any certain indicator of what the future will be).
+self-worth in any way (nor is any certain indicator of what the future will be
+like).
 
 ## Status
 

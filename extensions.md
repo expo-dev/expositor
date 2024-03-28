@@ -1,18 +1,18 @@
 ## List of AMD&thinsp;64 and Intel&thinsp;64 Extensions
 
-| Extension |    Year   | Notes                                                                                                                                        |
-|:---------:|:---------:|:---------------------------------------------------------------------------------------------------------------------------------------------|
-|    MMX    |    1997   | reuses floating point registers for mmx0–mmx7 registers (64 bits wide)                                                                       |
-|    SSE    |    1999   | adds the xmm0–xmm15 registers (128 bits wide)                                                                                                |
-|    SSE2   | 2000–2004 | effectively replaces the MMX extension                                                                                                       |
-|    SSE3   | 2004–2005 | adds horizontal operations                                                                                                                   |
-|   SSSE3   |    2006   | adds pmulhrsw instruction                                                                                                                    |
-|    SSE4   |    2007   | divided into two subsets (SSE4.1 and SSE4.2), adds the non-SIMD popcnt instruction                                                           |
-|    AVX    |    2011   | extends register width to 256 bits (ymm0–ymm15 registers), adds the VEX coding scheme, adds vzeroupper and the memory version of vbroadcast) |
-|    BMI    | 2012–2013 | also known as BMI1, adds non-SIMD tzcnt and blsr instructions                                                                                |
-|    BMI2   |    2013   | adds non-SIMD pdep and pext instructions                                                                                                     |
-|    AVX2   |    2013   | adds the register version of vbroadcast                                                                                                      |
-|  AVX-512  |    2017   | extends register width to 512 bits (zmm0-zmm15 registers), adds mask registers                                                               |
+| Extension |    Year   | Notes                                                                                                                                       |
+|:---------:|:---------:|:--------------------------------------------------------------------------------------------------------------------------------------------|
+|    MMX    |    1997   | reuses floating point registers for mmx0–mmx7 registers (64 bits wide)                                                                      |
+|    SSE    |    1999   | adds the xmm0–xmm15 registers (128 bits wide)                                                                                               |
+|    SSE2   | 2000–2004 | effectively replaces the MMX extension                                                                                                      |
+|    SSE3   | 2004–2005 | adds horizontal operations                                                                                                                  |
+|   SSSE3   |    2006   | adds pmulhrsw instruction                                                                                                                   |
+|    SSE4   |    2007   | divided into two subsets (SSE4.1 and SSE4.2), adds the non-SIMD popcnt instruction                                                          |
+|    AVX    |    2011   | extends register width to 256 bits (ymm0–ymm15 registers), adds the VEX coding scheme, adds vzeroupper and the memory version of vbroadcast |
+|    BMI    | 2012–2013 | also known as BMI1, adds non-SIMD tzcnt and blsr instructions                                                                               |
+|    BMI2   |    2013   | adds non-SIMD pdep and pext instructions                                                                                                    |
+|    AVX2   |    2013   | adds the register version of vbroadcast                                                                                                     |
+|  AVX-512  |    2017   | extends register width to 512 bits (zmm0-zmm15 registers), adds mask registers                                                              |
 
 Omitted from this list are, among others: 3DNow!; SSE4a, which is not supported
 by Intel; SSE5, which became the XOP, FMA, and F16C extensions; TBM = _trailing
