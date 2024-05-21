@@ -395,9 +395,9 @@ to find the constants used in move generation, a pentanomial Elo model, and
 the SPSA optimizer used to tune Expositor’s search constants.
 
 At one point, I was working on a better [specification of the Universal Chess
-Interface](https://expositor.dev/pdf/uci-2022-12-29.pdf). Several people were
-supportive (and I’m very grateful for that – thank you!) but there were also
-some very discouraging responses, enough so that I put it aside.[^6]
+Interface](https://expositor.dev/uci). Several people were supportive (and I’m
+very grateful for that – thank you!) but there were also some very discouraging
+responses, enough so that I put it aside.[^6]
 
 [^6]: I may eventually pick this up again and publish a second draft. If you
 have any comments on the first draft, I’d love to hear them; please send an

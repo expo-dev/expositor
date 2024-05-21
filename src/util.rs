@@ -125,7 +125,7 @@ pub static mut AFFINITY : Affinity = Affinity::Scheduler;
 
 pub fn get_affinity()
 {
-  #[cfg(arget_os="linux")]
+  #[cfg(target_os="linux")]
   {
     // Step 1. Get the mask of available processors
 
