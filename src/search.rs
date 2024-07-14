@@ -16,7 +16,7 @@ use crate::score::*;
 use crate::state::State;
 use crate::syzygy::{syzygy_support, probe_syzygy_wdl};
 use crate::tablebase::probe_3man;
-use crate::util::{STDOUT, STDERR, isatty};
+use crate::util::{STDOUT, STDERR, isatty, get_terminal_width};
 use crate::util::{AFFINITY, Affinity, assign_proc, set_affinity};
 
 use std::time::{Instant, Duration};
@@ -611,6 +611,7 @@ fn best_move(
   // ↑↑↑ DEBUG ↑↑↑
 
   if !(proc < 0) { set_affinity(proc as usize); }
+  let term_width = if isatty(STDERR) { get_terminal_width() } else { 0 };
 
   // Setup
 
@@ -692,21 +693,33 @@ fn best_move(
     let nps = nodes as f64 / time_to_depth;
 
     if isatty(STDERR) {
+      eprint!("\r");  // TODO replace with ANSI escape code
       if no_change { eprint!("\x1B[A\x1B[K"); }
       no_change = score == last_score && context.pv[0] == last_pv;
       let rectified = if state.turn == Black { -score } else { score };
+      // 3 + 1 + 3 + 1 + 6 + 1 + 5 = 20
       eprint!(
         "{:3} \x1B[2m{}/{}\x1B[22m {} \x1B[2m{}\x1B[22m",
         step, alpha_failures, beta_failures,
         format_time(time_to_depth), format_node_compact(nodes)
       );
+      let mut line_width = 20;
+      // 1 + 5 = 6
       if syzygy_enabled() {
         eprint!(" \x1B[2m{}\x1B[22m", format_node_compact(tbhits));
+        line_width += 6;
       }
+      // 1 + 6 = 7
       eprint!(" \x1B[1m{:>6}\x1B[22m", format_score(rectified));
+      line_width += 7;
+
       let mut scratch = state.clone_empty();
       for mv in context.pv[0].iter() {
-        eprint!(" {}", mv.in_context(&scratch));
+        let short = mv.in_context(&scratch);
+        let mv_width = 1 + short.len() as u16;
+        if term_width > 0 && line_width + mv_width > term_width { break; }
+        eprint!(" {}", short);
+        line_width += mv_width;
         scratch.apply(mv);
       }
       eprint!("\n");

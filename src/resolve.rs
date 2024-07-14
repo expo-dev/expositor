@@ -10,6 +10,8 @@ use crate::state::State;
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
+// TODO generize to remove code duplication (here and in Simplexitor) and then
+//   monomorphize to the function used in main search
 pub fn resolving_search(
   state      : &mut State,
   length     : u8,

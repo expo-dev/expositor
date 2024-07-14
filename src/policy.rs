@@ -3,6 +3,7 @@
 
 use crate::color::{WB, Color::*};
 use crate::conv::*;
+use crate::default::DEFAULT_POLICY;
 use crate::misc::{vmirror, piece_destinations, pawn_attacks};
 use crate::piece::{KQRBNP, Kind, Kind::*};
 use crate::rand::{Rand, RandDist, init_rand};
@@ -86,6 +87,8 @@ pub struct PolicyNetwork {
 pub struct PolicyBuffer {
   pub out : [Board; OUT]
 }
+
+pub static mut POLICY : PolicyNetwork = unsafe { std::mem::transmute(*DEFAULT_POLICY) };
 
 impl PolicyBuffer {
   pub const fn zero() -> Self

@@ -48,6 +48,54 @@ pub fn isatty(fd : u64) -> bool
   return false;
 }
 
+pub fn get_terminal_width() -> u16
+{
+  #[cfg(target_os="linux")]
+  unsafe {
+    let ret : i64;
+    let ioctl : u64 = 16;
+    let tiocgwinsz : u64 = 0x5413;
+    let mut winsize : [u16; 4] = [0; 4];
+    std::arch::asm!(
+      "syscall"
+      , inout("rax") ioctl => ret
+      ,    in("rdi") STDERR
+      ,    in("rsi") tiocgwinsz
+      ,    in("rdx") &mut winsize
+      ,   out("r10") _
+      ,   out("r8" ) _
+      ,   out("r9" ) _
+      ,   out("rcx") _
+      ,   out("r11") _
+    );
+    if ret != 0 { return 0; }
+    // The kernel populates winsize with
+    //   [
+    //     number of rows,
+    //     number of columns,
+    //     width in pixels,
+    //     height in pixels
+    //   ]
+    //
+    // Note that width and height in pixels may not be correct; for example,
+    //   with my current terminal emulator settings and my display,
+    //
+    //     width  in pixels / number of columns =  7.0 pixels / column
+    //     height in pixels / number of rows    = 16.0 pixels / row
+    //
+    //   whereas the true values are
+    //
+    //     14.0 pixels / column
+    //     32.0 pixels / row.
+    //
+    // We just return number of columns.
+    //
+    return winsize[1];
+  }
+  #[cfg(not(target_os="linux"))]
+  return 0;
+}
+
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
 #[allow(unused_variables)]

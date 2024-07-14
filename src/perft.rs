@@ -1,4 +1,5 @@
 use crate::movegen::Selectivity::Everything;
+use crate::policy::{PolicyBuffer, POLICY};
 use crate::state::State;
 
 use std::io::Write;
@@ -83,6 +84,57 @@ pub fn run_perft()
     1 => { eprintln!( "  1 mismatch");               }
     _ => { eprintln!("  {} mismatches", mismatches); }
   }
+}
+
+fn polyp(state : &mut State, buf : &mut PolicyBuffer, depth : u8) -> usize
+{
+  unsafe { POLICY.initialize(state, buf); }
+  if depth == 0 { return 1; }
+  let mut count = 1;
+  let metadata = state.save();
+  let (early_moves, late_moves) = state.legal_moves(Everything);
+  for mv in early_moves.into_iter().chain(late_moves.into_iter()) {
+    state.apply(&mv);
+    count += polyp(state, buf, depth-1);
+    state.undo(&mv);
+    state.restore(&metadata);
+  }
+  return count;
+}
+
+pub fn run_polyp()
+{
+  let mut total_nodes : usize = 0;
+  let mut total_time  : f64 = 0.0;
+
+  let mut buf = PolicyBuffer::zero();
+
+  for t in 0..PERFT_TESTS.len() {
+    let mut state = State::from_fen(PERFT_TESTS[t].0).unwrap();
+
+    eprintln!("  Position {}", t);
+    eprint!("    Running...");
+    let _ = std::io::stderr().flush();
+
+    let correct = &PERFT_TESTS[t].1;
+    let depth = correct.iter().position(|&n| n > 4096).unwrap_or(4) - 1;
+
+    let timer = Instant::now();
+    let count = polyp(&mut state, &mut buf, depth as u8);
+    let elapsed = timer.elapsed();
+
+    eprint!("\r\x1B[K");
+    eprintln!("    {} node", count);
+    let nps = count as f64 / elapsed.as_secs_f64();
+    eprintln!("    {:.1} node/s", nps);
+
+    total_nodes += count;
+    total_time  += elapsed.as_secs_f64();
+  }
+  eprintln!("  Total");
+  eprintln!("    {} knode", total_nodes);
+  let nps = total_nodes as f64 / total_time;
+  eprintln!("    {:.1} node/s", nps);
 }
 
 static PERFT_TESTS : [(&str, [usize; 12]); 58] = [

@@ -4,7 +4,7 @@ use crate::movegen::Selectivity::Everything;
 use crate::nnue::{HEADS, NETWORK};
 use crate::piece::Kind::King;
 use crate::piece::Piece;
-use crate::policy::{PolicyNetwork, PolicyBuffer};
+use crate::policy::{PolicyBuffer, POLICY};
 use crate::state::State;
 
 pub fn show(state : &State, perspective : Color)
@@ -116,10 +116,10 @@ pub fn derived(state : &State)
   eprint!("\x1B[0m");
 }
 
-pub fn showpolicy(state : &State, network : &PolicyNetwork, quiet_only : bool)
+pub fn showpolicy(state : &State, quiet_only : bool)
 {
   let mut buf = PolicyBuffer::zero();
-  network.initialize(state, &mut buf);
+  unsafe { POLICY.initialize(state, &mut buf); }
 
   let mut scores = [f32::INFINITY; 384];
   let mut best = [(f32::INFINITY, crate::movetype::Move::NULL); 20];
@@ -131,7 +131,7 @@ pub fn showpolicy(state : &State, network : &PolicyNetwork, quiet_only : bool)
     let src = match state.turn { White => src, Black => vmirror(src) };
     let dst = m.dst as usize;
     let dst = match state.turn { White => dst, Black => vmirror(dst) };
-    let s = network.evaluate(&buf, m.piece.kind(), src, dst);
+    let s = unsafe { POLICY.evaluate(&buf, m.piece.kind(), src, dst) };
     let idx = (m.piece.kind() as usize)*64 + m.dst as usize;
     let z = scores[idx];
     if z.is_infinite() || s < z { scores[idx] = s; }

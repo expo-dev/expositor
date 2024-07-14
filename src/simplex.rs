@@ -6,8 +6,8 @@ use crate::limits::Limits;
 use crate::misc::vmirror;
 use crate::movegen::Selectivity::Everything;
 use crate::movetype::Move;
-use crate::policy::{PolicyNetwork, PolicyBuffer};
-use crate::resolve::resolving_search;
+use crate::policy::{PolicyBuffer, POLICY};
+use crate::rand::Rand;
 use crate::score::*;
 use crate::search::{threefold, twofold};
 use crate::state::State;
@@ -22,24 +22,26 @@ pub enum SimplexConfig {
   PolicyOnly  // policy network only
 }
 
+const HORIZON : u16 = 20;
+
 pub fn simplexitor(
   state   : &State,
   history : &Vec<(u64, bool)>,
   limits  : Limits,
   config  : SimplexConfig,
-  network : &PolicyNetwork
-)
+) -> bool
 {
   use SimplexConfig::*;
   let clock = Instant::now();
 
   let mut buf = PolicyBuffer::zero();
-  if config != ValueOnly { network.initialize(&state, &mut buf); }
+  if config != ValueOnly { unsafe { POLICY.initialize(&state, &mut buf); } }
 
   let mut state = state.clone();
   let mut context = Context::new();
   context.state_history = history.clone();
 
+  let mut snd_score  = PROVEN_LOSS;
   let mut best_score = PROVEN_LOSS;
   let mut best_move = Move::NULL;
 
@@ -67,7 +69,7 @@ pub fn simplexitor(
         let src = match state.turn { White => src, Black => vmirror(src) };
         let dst = mv.dst as usize;
         let dst = match state.turn { White => dst, Black => vmirror(dst) };
-        let loss = network.evaluate(&buf, mv.piece.kind(), src, dst);
+        let loss = unsafe { POLICY.evaluate(&buf, mv.piece.kind(), src, dst) };
 
         if loss < best_loss {
           best_loss = loss;
@@ -95,8 +97,12 @@ pub fn simplexitor(
       state.restore(&metadata);
 
       if score > best_score {
+        snd_score = best_score;
         best_score = score;
         best_move = mv.clone();
+      }
+      else if score > snd_score {
+        snd_score = score;
       }
     }
   }
@@ -106,6 +112,10 @@ pub fn simplexitor(
       best_move = poly_move;
     }
   }
+
+  // If we're decidedly winning, let Expositor finish the game so that we make
+  //   forward progress and don't frustrate players.
+  if best_score >= 10_00 { return false; }
 
   let time_active = clock.elapsed().as_secs_f64();
 
@@ -127,7 +137,13 @@ pub fn simplexitor(
     );
   }
 
+  let jitter = 2.0_f64.powf(u32::rand() as f64 / 2147483647.5 - 1.4150375);
+  let shuffle = 1.0 - std::cmp::min(state.dfz, 20) as f64 * (0.75 / 20.0);
+  let gap = std::cmp::min(best_score - snd_score, 9_00) as f64 / 100.0;
+  let multiplier = jitter * shuffle / (1.0 + gap);
+
   let wait = limits.target.unwrap_or(limits.cutoff.unwrap_or(0.0));
+  let wait = (wait * multiplier).min(limits.cutoff.unwrap_or(0.0));
   let remaining = wait - clock.elapsed().as_secs_f64();
   if remaining > 0.0 { std::thread::park_timeout(Duration::from_secs_f64(remaining)); }
   let elapsed = clock.elapsed().as_secs_f64();
@@ -144,4 +160,128 @@ pub fn simplexitor(
   if !isatty(STDOUT) || !isatty(STDERR) {
     println!("bestmove {}", best_move.algebraic());
   }
+
+  return true;
+}
+
+fn game_eval(state : &State) -> i16
+{
+  if state.dfz >= HORIZON { return 0; }
+  if let Some(score) = state.endgame() { return score; }
+  return (state.evaluate() * 100.0).round() as i16;
+}
+
+fn resolving_search(
+  state      : &mut State,
+  length     : u8,
+  height     : u8,
+  alpha      : i16,
+  beta       : i16,
+  context    : &mut Context,
+) -> i16
+{
+  use crate::constants::{DELTA_SCALE, DELTA_MARGIN};
+  use crate::misc::Op;
+  use crate::movegen::Selectivity;
+  use crate::movesel::MoveSelector;
+  use crate::movetype::fast_eq;
+  use crate::piece::Piece::Null;
+
+  if state.dfz > 100 { return 0; }
+
+  context.r_nodes_at_length[length as usize] += 1;
+  context.r_nodes_at_height[height as usize] += 1;
+
+  let worst_possible = PROVEN_LOSS + (height as i16);
+  let  best_possible = PROVEN_MATE - (height as i16 + 1);
+
+  // You can't stand pat if you're in check
+  let static_eval = if state.incheck { worst_possible } else { game_eval(state) };
+  let mut estimate = static_eval;
+
+  let mut alpha = std::cmp::max(estimate, alpha);
+  let beta = std::cmp::min(best_possible, beta);
+
+  if alpha >= beta { return alpha; }
+
+  // Don't consider moves which only give check (which are neither
+  //   captures nor promotions) if last turn you didn't capture or
+  //   promote either
+  // Once we're far enough from the leaf, we disallow these kinds
+  //   of moves altogether
+  // (If you're in check, the selector will automatically set the
+  //   selectivity to Everything)
+  let selectivity =
+    if length >= 4 {
+      Selectivity::GainfulOnly
+    }
+    else if length >= 2 && !context.gainful[length as usize - 2] {
+      Selectivity::GainfulOnly
+    }
+    else {
+      Selectivity::ActiveOnly
+    };
+
+  let mut selector = MoveSelector::new(selectivity, height, Move::NULL);
+  let metadata = state.save();
+  let mut successors = 0;
+  while let Some(mv) = selector.next(state, context) {
+    successors += 1;
+
+    // We always allow a move to be considered if it gives discovered
+    //   check, even if static exchange analysis predicts it is losing
+    if !state.incheck && !mv.is_unusual() && !mv.gives_discovered_check() {
+      if mv.is_capture() {
+        // Ignore losing captures and, as we move away from the leaf,
+        //   start ignoring merely neutral captures as well
+        let threshold = if length < 2 || mv.gives_check() { 0 } else { 1 };
+        if mv.score < threshold { continue; }
+        // Delta pruning
+        //   We disable delta pruning when the score is near mate because the
+        //   assumptions of delta pruning no longer hold. In a KR v K endgame,
+        //   for instance, capturing the rook doesn't gain roughly 5 pawns –
+        //   it gains 100 pawns or more (converting a loss into a draw).
+        // TODO rather than using the static exchange score, consider using the
+        //   most optimistic score (capturing without retaliation) which results
+        //   in safer, more conservative behavior.
+        if !mv.gives_check() && estimate.abs() < INEVITABLE_MATE {
+          let gain = (mv.score as i32 * 10 * DELTA_SCALE) / 4096 + DELTA_MARGIN;
+          if static_eval + (gain as i16) < alpha { continue; }
+        }
+      }
+      else {
+        let prediction = state.analyze_exchange(
+          Op {square: mv.src, piece: mv.piece},
+          Op {square: mv.dst, piece: Null}
+        );
+        if prediction < 0 { continue; }
+      }
+    }
+
+    context.gainful[length as usize] = mv.is_gainful() || state.incheck;
+    state.apply(&mv);
+    let score =
+      -resolving_search(state, length+1, height+1, -beta, -alpha, context);
+    state.undo(&mv);
+    state.restore(&metadata);
+
+    estimate = std::cmp::max(estimate, score);
+    alpha    = std::cmp::max(alpha,    score);
+    if alpha >= beta {
+      if !mv.is_gainful() {
+        let killers = &mut context.killer_table[height as usize];
+        if !fast_eq(&mv, &killers.0) {
+          killers.1 = (killers.0).clone();
+          killers.0 = mv;
+        }
+      }
+      break;
+    }
+  }
+
+  // When there are no active/gainful successors and we're in check, this is actually mate!
+  //   since every move counts as active/gainful when you are in check.
+  if successors == 0 && state.incheck { return PROVEN_LOSS + height as i16; }
+  else if state.dfz == 100 { return 0; }
+  else { return estimate; }
 }

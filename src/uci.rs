@@ -7,8 +7,8 @@ use crate::global::{syzygy_enabled, searching, enable_prev_gen/*, enable_nnue*/}
 use crate::limits::SearchParams;
 use crate::movetype::Move;
 use crate::nnue::{NETWORK, Network};
-use crate::perft::run_perft;
-use crate::policy::{PolicyNetwork, train_policy};
+use crate::perft::{run_perft, run_polyp};
+use crate::policy::{PolicyNetwork, train_policy, POLICY};
 use crate::proof::{ALLOC_SIZE, ProofNode, ProofBuffer, ProofAlloc, pns};
 use crate::resolve::debug_resolving_search;
 use crate::score::{INVALID_SCORE, LOWEST_SCORE, HIGHEST_SCORE, format_score, format_uci_score};
@@ -75,7 +75,6 @@ pub fn uci() -> std::io::Result<()>
 
   root.initialize_nnue();
 
-  let mut policy_network = unsafe { std::mem::transmute(*crate::default::DEFAULT_POLICY) };
   let mut simplex_mode : Option<SimplexConfig> = None;
 
   let mut proof_alloc : Option<ProofAlloc> = None;
@@ -381,6 +380,9 @@ pub fn uci() -> std::io::Result<()>
             continue;
           }
         }
+        /*
+          TODO if there’s only one legal move, make it immediately
+        */
         let mut params = SearchParams::new();
         while let Some(opt) = inp.next() {
           if opt == "infinite" {
@@ -405,11 +407,10 @@ pub fn uci() -> std::io::Result<()>
         }
         if let Some(mode) = simplex_mode {
           // ↓↓↓ TEMPORARY ↓↓↓
-          // showpolicy(&root, &policy_network, false);
+          // showpolicy(&root, false);
           // ↑↑↑ TEMPORARY ↑↑↑
           let limits = params.calculate_limits(&root, 0.0);
-          simplexitor(&root, &history, limits, mode, &policy_network);
-          continue;
+          if simplexitor(&root, &history, limits, mode) { continue; }
         }
         if searching() {
           std::thread::sleep(std::time::Duration::from_millis(MARGIN));
@@ -542,18 +543,22 @@ pub fn uci() -> std::io::Result<()>
 
       "lp" => {
         let path = match inp.next() { Some(x) => x, None => continue };
-        policy_network = PolicyNetwork::load(path)?;
+        unsafe { POLICY = PolicyNetwork::load(path)?; }
       }
 
       "ls" => {
-        showpolicy(&root, &policy_network, false);
+        showpolicy(&root, false);
       }
 
       "ip" => {
         let path = match inp.next() { Some(x) => x, None => continue };
-        policy_network.save_image(&format!("1-{}", path), 1)?;
-        policy_network.save_image(&format!("2-{}", path), 2)?;
-        policy_network.save_image(&format!("3-{}", path), 3)?;
+        unsafe { POLICY.save_image(&format!("1-{}", path), 1)?; }
+        unsafe { POLICY.save_image(&format!("2-{}", path), 2)?; }
+        unsafe { POLICY.save_image(&format!("3-{}", path), 3)?; }
+      }
+
+      "polyp" => {
+        run_polyp();
       }
 
       // Proof Number Search ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
