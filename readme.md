@@ -28,14 +28,14 @@ might find the [engine programming discord](https://discord.gg/qEWAGXczar) and
 recommend finding a friend who you can share your hobby with – it’s a lot of
 fun that way.
 
-A trope of the engine programming community is that “no one’s as disdainful of
-an engine as the developer themself”; engine programming seems to be unusually
-effective at engendering strong feelings of self-criticism. So in case you need
-to hear it from someone: any goal of yours is a valid one (whether that’s
+A trope of the engine programming community is that “no one’s as disdainful
+of an engine as the developer themself”; engine programming seems to be rather
+effective at engendering strong feelings of self-criticism. So in case you
+need to hear it from someone: any goal of yours is a valid one (whether that’s
 chasing Elo gains, wanting to learn stuff, or trying out new, weird, wonderful
 ideas), and the performance or progress of your engine does not reflect your
-self-worth in any way (nor is any certain indicator of what the future will be
-like).
+self-worth in any way (nor is any certain indicator of what the future will
+be like).
 
 ## Status
 
@@ -124,9 +124,6 @@ updatable neural networks (NNUEs); the figures are only meant as visual aids,
 and the goal is just to provide a very cursory description of Expositor’s
 network.
 
-<details>
-<summary><i>Click to expand</i></summary>
-
 A simple symmetric NNUE has, in concept, the structure depicted at the top of
 the following animation.
 - Each square node represents a vector of 64 numbers, each 1 or 0, encoding
@@ -201,7 +198,6 @@ square nodes). In this network, however, those colors can be different. Instead,
 the outgoing weights connecting to the square nodes are the same color.
 
 I haven’t tried this; for all I know, it works better!
-</details>
 
 ### Move Generation
 
@@ -248,11 +244,7 @@ tree, and so also has length 0 – these are the only nodes that are part of bot
 the main search tree and a quiescing search tree.
 
 The quiescing search varies in selectivity in a way that is fairly
-straightforward in principal but rather tedious to describe; click on the
-section below for details.
-
-<details>
-<summary><i>Click to expand</i></summary>
+straightforward in principal but rather tedious to describe.
 
 The move generator itself has three levels of selectivity:
 - Everything (quiet moves, checks, captures, and promotions),
@@ -272,7 +264,6 @@ The selectivity of the move generator at a node is
 - otherwise Active;
 
 where _A_ and _B_ are small constants and _A_ &lt; _B_.
-</details>
 
 Summarily, the quiescing search will consider noncapture checks unless
 a node is far from the root of the quiescing search or the side to move gave
@@ -464,24 +455,6 @@ setoption name Persist value <bool>
   (This is achieved by tagging each table entry with a generation and
   does not incur the penalty of actually zeroing the table.) Setting
   this option to true generally increases playing strength.
-
-setoption name Pin value <bool>
-  Request that search threads set their affinity mask so that they are
-  pinned to different logical processors. The engine will attempt to
-  determine which logical processors share each physical core by querying
-  sysfs and then assign search threads to different physical cores. Once
-  every physical core has a search thread assigned to it, the engine will
-  assign search threads to the remaining logical processors in an attempt
-  to evenly distribute search threads over the physical cores. Once every
-  logical processor has a search thread assigned to it, the engine will
-  stop issuing assignments, leaving any remaining threads with their
-  default affinity masks. If the engine is unable to determine the
-  topology, it will behave as if the Pin option were set to false,
-  and placement will be left to the operating system process scheduler.
-  If multiple instances of the engine are running on the same machine,
-  it is strongly recommended that you set this option to false, otherwise
-  the instances will contend for the same cores despite the availability
-  of other cores. This feature is only implemented for Linux systems.
 
 setoption name SyzygyPath value <path>
   Inform the engine that Syzygy tablebase files are located in the

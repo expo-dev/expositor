@@ -107,6 +107,18 @@ impl Rand for u32 {
   }
 }
 
+impl Rand for u16 {
+  fn rand_with(rng : &mut u64) -> Self
+  {
+    return (u64::rand_with(rng) >> 32) as u16;
+  }
+
+  fn rand() -> Self
+  {
+    return Self::rand_with(unsafe { &mut *std::ptr::addr_of_mut!(RNG_STATE) });
+  }
+}
+
 pub trait RandDist {
   fn vee() -> Self;
   fn uniform() -> Self;

@@ -93,7 +93,6 @@ fn main() -> std::io::Result<()>
       util::VERSION, util::BUILD
     );
   }
-  util::get_affinity();
   util::set_stacksize(134_217_728);
   dest::generate_tables();
   tablebase::build_3man();

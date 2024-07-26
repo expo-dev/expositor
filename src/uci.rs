@@ -53,7 +53,6 @@ pub const CACHE_SIZE_DEFAULT  : usize = 67_108_864; // 64 MiB ~ 4 million entrie
 const SEARCH_THREADS_DEFAULT  : usize = 1;
 const SEARCH_OVERHEAD_DEFAULT : usize = 10;
 const USE_PREV_GEN_DEFAULT    : bool  = true;
-const PIN_THREADS_DEFAULT     : bool  = false;
 
 // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
@@ -66,7 +65,6 @@ pub fn uci() -> std::io::Result<()>
   enable_prev_gen(USE_PREV_GEN_DEFAULT);
   let mut search_threads  = SEARCH_THREADS_DEFAULT;
   let mut search_overhead = SEARCH_OVERHEAD_DEFAULT;
-  let mut pin_threads     = PIN_THREADS_DEFAULT;
 
   let mut supervisor : Option<std::thread::JoinHandle<()>> = None;
 
@@ -97,7 +95,6 @@ pub fn uci() -> std::io::Result<()>
         println!("option name Threads type spin default {} min 1 max 252", SEARCH_THREADS_DEFAULT);
         println!("option name Overhead type spin default {} min 0 max 1000", SEARCH_OVERHEAD_DEFAULT);
         println!("option name Persist type check default {}", USE_PREV_GEN_DEFAULT);
-        println!("option name Pin type check default {}", PIN_THREADS_DEFAULT);
 /*      println!("option name Nnue type check default true"); */
         println!("option name SyzygyPath type string default <empty>");
         println!("uciok");
@@ -162,13 +159,6 @@ pub fn uci() -> std::io::Result<()>
             }
           }
 
-          "Pin" => {
-            match val.to_lowercase().as_str() {
-              "true" | "t" | "yes" | "y" => { pin_threads = true;  }
-              "false" | "f" | "no" | "n" => { pin_threads = false; }
-              _ => { ttyeprintln!("error: invalid or missing value"); }
-            }
-          }
 /*
           "Nnue" => {
             match val.to_lowercase().as_str() {
@@ -213,19 +203,9 @@ pub fn uci() -> std::io::Result<()>
         }
       }
 
-      "pin" => {
-        let Some(tok) = inp.next() else { continue };
-        match tok.to_lowercase().as_str() {
-          "true" | "t" | "yes" | "y" => { pin_threads = true;  }
-          "false" | "f" | "no" | "n" => { pin_threads = false; }
-          _ => { ttyeprintln!("error: invalid value"); }
-        }
-      }
-
       "auto" => {
         let th = std::cmp::max(1, num_cores() / 2);
         search_threads = th;
-        pin_threads = true;
         initialize_cache(536_870_912 * th);
         initialize_syzygy("/syzygy");
       }
@@ -420,7 +400,7 @@ pub fn uci() -> std::io::Result<()>
           }
         }
         let limits = params.calculate_limits(&root, 10.0);
-        supervisor = Some(start_search(&root, &history, limits, search_threads, pin_threads));
+        supervisor = Some(start_search(&root, &history, limits, search_threads));
       }
 
       "stop" => {
@@ -920,24 +900,6 @@ DESCRIPTION
       (This is achieved by tagging each table entry with a generation and
       does not incur the penalty of actually zeroing the table.) Setting
       this option to true generally increases playing strength.
-
-    setoption name Pin value <bool>
-      Request that search threads set their affinity mask so that they are
-      pinned to different logical processors. The engine will attempt to
-      determine which logical processors share each physical core by querying
-      sysfs and then assign search threads to different physical cores. Once
-      every physical core has a search thread assigned to it, the engine will
-      assign search threads to the remaining logical processors in an attempt
-      to evenly distribute search threads over the physical cores. Once every
-      logical processor has a search thread assigned to it, the engine will
-      stop issuing assignments, leaving any remaining threads with their
-      default affinity masks. If the engine is unable to determine the
-      topology, it will behave as if the Pin option were set to false,
-      and placement will be left to the operating system process scheduler.
-      If multiple instances of the engine are running on the same machine,
-      it is strongly recommended that you set this option to false, otherwise
-      the instances will contend for the same cores despite the availability
-      of other cores. This feature is only implemented for Linux systems.
 
     setoption name SyzygyPath value <path>
       Inform the engine that Syzygy tablebase files are located in the

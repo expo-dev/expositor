@@ -11,7 +11,7 @@ use crate::rand::Rand;
 use crate::score::*;
 use crate::search::{threefold, twofold};
 use crate::state::State;
-use crate::util::{isatty, STDOUT, STDERR};
+use crate::util::{isatty, STDOUT, STDERR, get_random};
 
 use std::time::{Instant, Duration};
 
@@ -24,6 +24,8 @@ pub enum SimplexConfig {
 
 const HORIZON : u16 = 20;
 
+const RANDOMIZE : bool = true;
+
 pub fn simplexitor(
   state   : &State,
   history : &Vec<(u64, bool)>,
@@ -33,6 +35,8 @@ pub fn simplexitor(
 {
   use SimplexConfig::*;
   let clock = Instant::now();
+
+  let mut rng = if RANDOMIZE { get_random() } else { 0 };
 
   let mut buf = PolicyBuffer::zero();
   if config != ValueOnly { unsafe { POLICY.initialize(&state, &mut buf); } }
@@ -89,7 +93,12 @@ pub fn simplexitor(
             if state.incheck { PROVEN_MATE } else { 0 }
           }
           else {
-            -resolving_search(&mut state, 0, 1, LOWEST_SCORE, HIGHEST_SCORE, &mut context)
+            let raw = -resolving_search(
+              &mut state, 0, 1, LOWEST_SCORE, HIGHEST_SCORE, &mut context
+            );
+            if RANDOMIZE && raw.abs() < MINIMAL_PROVEN_MATE {
+              raw + (u16::rand_with(&mut rng) % 32) as i16 - 15
+            } else { raw }
           }
         };
       context.state_history.pop();

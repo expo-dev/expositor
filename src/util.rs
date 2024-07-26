@@ -140,6 +140,8 @@ pub fn num_cores() -> usize
   return n;
 }
 
+/* ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
 fn cpu0_sibling() -> isize
 {
   let p = "/sys/devices/system/cpu/cpu0/topology/thread_siblings_list";
@@ -273,7 +275,38 @@ pub fn set_affinity(idx : usize)
   }
 }
 
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~*/
+
+#[allow(unused_variables)]
+pub fn get_random() -> u64
+{
+  #[cfg(target_os="linux")]
+  unsafe {
+    let ret : i64;
+    let getrandom : u64 = 318;
+    let buffer : u64 = 0;
+    let count  : u64 = 8;
+    let flags  : u64 = 0;
+    std::arch::asm!(
+      "syscall"
+      , inout("rax") getrandom => ret
+      ,    in("rdi") &buffer
+      ,    in("rsi") count
+      ,    in("rdx") flags
+      ,   out("r10") _
+      ,   out("r8" ) _
+      ,   out("r9" ) _
+      ,   out("rcx") _
+      ,   out("r11") _
+    );
+    assert!(ret as u64 == count);
+    return buffer;
+  }
+  #[cfg(not(target_os="linux"))]
+  return 0;
+}
+
+// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~*/
 
 #[inline]
 #[cfg(target_feature="bmi2")]
