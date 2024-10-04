@@ -1,0 +1,25 @@
+[package]
+name = "expositor"
+version = "2.0.0"
+authors = ["<helo@expositor.dev>"]
+edition = "2024"
+
+[dependencies]
+libc = "0.2"
+
+[build-dependencies]
+cc = "1.0"
+
+[profile.dev]
+opt-level = 3
+debug = true
+debug-assertions = true
+overflow-checks = true
+codegen-units = 1
+
+[profile.release]
+opt-level = 3
+debug = true
+debug-assertions = false
+overflow-checks = false
+codegen-units = 1
