@@ -1,0 +1,129 @@
+#! /usr/bin/ruby
+
+if ARGV.length != 1
+  puts "usage: #{$0} <version>"
+  exit
+end
+
+VERSION = ARGV[0]
+WINLINK = '-C link-arg=-Wl,--stack,33554432'
+
+#~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+%w[linux windows].each do |platform|
+  %w[intel amd generic].each do |vendor|
+    system('mkdir -p ' + ['release', platform, vendor].join(?/))
+  end
+end
+
+ENV['VERSION'] = VERSION
+ENV['BUILD'] = Time.now.strftime('built on %-d %b %Y')
+
+LINUX_PRODUCT = 'target/x86_64-unknown-linux-gnu/release/expositor'
+WINDOWS_PRODUCT = 'target/x86_64-pc-windows-gnu/release/expositor.exe'
+
+SIMD = %w[sse2 sse3 ssse3 sse4.1 sse4.2 avx avx2 avx512f avx512f avx512cd avx512vl avx512dq avx512bw]
+BITOP = %w[popcnt lzcnt bmi1 bmi2]
+
+def elaborate(simd, bitop)
+  idx = SIMD.index(simd)
+  enable  = bitop
+  disable = (BITOP - bitop)
+  enable  += SIMD[..idx]
+  disable += SIMD[idx+1..].reject {|f| f.include? '512' }
+  return (enable.map {|f| ?+ + f } \
+       + disable.map {|f| ?- + f }).join(?,)
+end
+
+def cargo(target, flags)
+  flags = flags.join(' ')
+  cmd = %Q[RUSTFLAGS="#{flags}" cargo build --target #{target} --release]
+  puts("   \e[2m#{cmd}\e[22m")
+  system(cmd)
+end
+
+def make(vendor, name, target: nil, feature: nil)
+  feature = elaborate(*feature) if not feature.nil?
+
+  flags = []
+  flags << "-C target-cpu=#{target}"      if not target.nil?
+  flags << "-Z tune-cpu=#{target}"        if not target.nil?
+  flags << "-C target-feature=#{feature}" if not feature.nil?
+
+  puts([vendor, name].join(' '))
+  cargo('x86_64-unknown-linux-gnu', flags)
+  cargo('x86_64-pc-windows-gnu', flags << WINLINK)
+
+  name = "expo-#{VERSION}-#{name}"
+  File.rename(LINUX_PRODUCT, "release/linux/#{vendor}/#{name}")
+  File.rename(WINDOWS_PRODUCT, "release/windows/#{vendor}/#{name}.exe")
+end
+
+#~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+# rustc --print=target-cpus
+
+make(:intel, 'core-penryn'            , target: 'penryn'        )
+make(:intel, 'nehalem-nehalem'        , target: 'nehalem'       )
+make(:intel, 'nehalem-westmere'       , target: 'westmere'      )
+make(:intel, 'sandybridge-sandybridge', target: 'sandybridge'   )
+make(:intel, 'sandybridge-ivybridge'  , target: 'ivybridge'     )
+make(:intel, 'haswell-haswell'        , target: 'haswell'       )
+make(:intel, 'haswell-broadwell'      , target: 'broadwell'     )
+make(:intel, 'skylake-skylake'        , target: 'skylake'       )
+make(:intel, 'skylake-cascadelake'    , target: 'cascadelake'   )
+make(:intel, 'sunnycove-icelake'      , target: 'icelake-server')
+make(:intel, 'willowcove-tigerlake'   , target: 'tigerlake'     )
+make(:intel, 'cypresscove-rocketlake' , target: 'rocketlake'    )
+make(:intel, 'goldencove-alderlake'   , target: 'alderlake'     )
+make(:intel, 'raptorcove-raptorlake'  , target: 'raptorlake'    )
+
+make(:amd, 'bulldozer'  , target: 'bdver1'  )
+make(:amd, 'piledriver' , target: 'bdver2'  )
+make(:amd, 'steamroller', target: 'bdver3'  )
+make(:amd, 'excavator'  , target: 'bdver4'  )
+make(:amd, 'zen1'       , target: 'znver1'  )
+make(:amd, 'zen2'       , target: 'znver2'  )
+make(:amd, 'zen3'       , target: 'znver3'  )
+make(:amd, 'zen4'       , target: 'znver4'  )
+make(:amd, 'zen5'       , target: 'znver5'  )
+
+make(:generic, 'ssse3'      , feature: ['ssse3'   , []                        ])
+make(:generic, 'sse41'      , feature: ['sse4.1'  , []                        ])
+make(:generic, 'sse42'      , feature: ['sse4.2'  , %w[popcnt                ]])
+make(:generic, 'avx'        , feature: ['avx'     , %w[popcnt                ]])
+make(:generic, 'avx+abm'    , feature: ['avx'     , %w[popcnt lzcnt          ]])
+make(:generic, 'avx+abm+bmi', feature: ['avx'     , %w[popcnt lzcnt bmi1     ]])
+make(:generic, 'avx2'       , feature: ['avx2'    , %w[popcnt lzcnt bmi1 bmi2]])
+make(:generic, 'avx512'     , feature: ['avx512bw', %w[popcnt lzcnt bmi1 bmi2]])
+
+%w[linux windows].each do |platform|
+  File.open("release/#{platform}/generic/README", ?w) do |fh|
+    fh.puts("If you have an Intel processor, use one of:")
+    fh.puts("  ssse3, sse41, sse42, avx, avx2, avx512")
+    fh.puts()
+    fh.puts("If you have an AMD processor, use one of:")
+    fh.puts("  avx+abm, avx+abm+bmi, avx2, avx512")
+    fh.puts()
+    fh.puts("For an explanation of these names, see:")
+    fh.puts("  https://expositor.dev/isa-extensions")
+  end
+  %w[intel amd].each do |vendor|
+    File.open("release/#{platform}/#{vendor}/README", ?w) do |fh|
+      fh.puts("For an explanation of these names, see:")
+      fh.puts("  https://expositor.dev/isa-extensions")
+    end
+  end
+end
+
+#~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+
+system('rm -r target')
+
+Dir.chdir('release')
+system("zip -vr   expo-#{VERSION}-linux.zip      linux"  )
+system("zip -vr   expo-#{VERSION}-windows.zip    windows")
+system("tar -cvzf expo-#{VERSION}-linux.tar.gz   linux"  )
+system("tar -cvzf expo-#{VERSION}-windows.tar.gz windows")
+# system('rm -r linux')
+# system('rm -r windows')
+puts('note: remember to delete release/{linux,windows} before uploading')

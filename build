@@ -1,0 +1,25 @@
+#! /usr/bin/env bash
+
+ENCODING=(X WK WQ WR WB WN WP BK BQ BR BB BN BP)
+COMMIT_YEAR="$(git show -s --format=%cd HEAD --date=format:%Y)"
+COMMIT_MONTH="$(git show -s --format=%cd HEAD --date=format:%-m)"
+COMMIT_DAY="$(git show -s --format=%cd HEAD --date=format:%d)"
+COMMIT_TIME="$(git show -s --format=%cd HEAD --date=format:%H%M)"
+VERSION_BASE="${COMMIT_YEAR:3}${ENCODING[$COMMIT_MONTH]}$COMMIT_DAY"
+if [[ "$(git status --porcelain --untracked-files=no)" ]]; then
+  export VERSION="$VERSION_BASE+dev"
+else
+  export VERSION="$VERSION_BASE+$COMMIT_TIME"
+fi
+
+BUILD_DATE="$(date +'%-d %b %Y')"
+BUILD_TIME="$(date +'%H%M')"
+export BUILD="built at $BUILD_TIME on $BUILD_DATE"
+
+FLAGS='--codegen target-cpu=native'
+if [[ "$(uname)" = 'Darwin' ]]; then
+  FLAGS="$FLAGS -C link-arg=-Wl,-stack_size,0x2000000"
+fi
+
+RUSTFLAGS="$FLAGS" cargo build
+RUSTFLAGS="$FLAGS" cargo build --release
